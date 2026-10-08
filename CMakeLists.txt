@@ -93,6 +93,25 @@ option(BOX3D_AVX2 "Compile AVX2 kernels, selected at runtime on x86 CPUs that su
 option(BOX3D_COMPILE_WARNING_AS_ERROR "Compile warnings as errors" OFF)
 option(BOX3D_DOUBLE_PRECISION "Enable double precision for large worlds" OFF)
 
+# Experimental PlayStation 2 EE target: start with the portable scalar backend.
+# No VU0/MMI acceleration is enabled at this stage.
+option(BOX3D_PS2 "Build the experimental PS2 EE single-worker port" OFF)
+if(BOX3D_PS2)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
+        message(FATAL_ERROR "BOX3D_PS2 requires the PS2 EE toolchain file (cmake/toolchains/ps2-ee.cmake)")
+    endif()
+    set(BOX3D_DISABLE_SIMD ON CACHE BOOL "PS2 scalar baseline" FORCE)
+    set(BOX3D_AVX2 OFF CACHE BOOL "AVX2 is not available on PS2" FORCE)
+    set(BOX3D_DOUBLE_PRECISION OFF CACHE BOOL "PS2 baseline uses float" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "PS2 static library" FORCE)
+    set(BOX3D_SAMPLES OFF CACHE BOOL "PS2: no sokol samples" FORCE)
+    set(BOX3D_UNIT_TESTS OFF CACHE BOOL "PS2: desktop tests disabled" FORCE)
+    set(BOX3D_BENCHMARKS OFF CACHE BOOL "PS2: desktop benchmarks disabled" FORCE)
+    set(BOX3D_DOCS OFF CACHE BOOL "PS2: no Doxygen" FORCE)
+    set(BOX3D_PROFILE OFF CACHE BOOL "PS2: no Tracy" FORCE)
+    message(STATUS "Box3D PS2: single-worker scalar EE build (no SIMD/VU0 yet)")
+endif()
+
 # These are read by the library build, so they must precede add_subdirectory(src),
 # otherwise the first configure and a re-configure produce different libraries.
 # Top level only, so they stay hidden from FetchContent consumers.
@@ -190,3 +209,10 @@ endif()
 # https://stackoverflow.com/questions/72635402/how-to-set-working-directory-in-cmake-visual-studio-2022
 # launch.vs.json
 # "currentDir": "${workspaceRoot}"
+
+# Optional headless gravity/contact regression test for EE and host compilers.
+option(BOX3D_PS2_SMOKE "Build the PS2-port headless smoke test" OFF)
+if(BOX3D_PS2_SMOKE)
+    add_executable(box3d_ps2_smoke ps2/smoke.c)
+    target_link_libraries(box3d_ps2_smoke PRIVATE box3d::box3d)
+endif()

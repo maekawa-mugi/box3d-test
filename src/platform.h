@@ -31,6 +31,12 @@
 #define b3Prefetch( addr ) ( (void)( addr ) )
 #endif
 
+#if defined( B3_PLATFORM_PS2 )
+// PS2 baseline is strictly single-threaded. These operations are NOT safe for
+// concurrent EE workers or interrupt handlers. Avoids 64-bit libatomic helpers.
+#include "platform_ps2.h"
+#else
+
 static inline void b3AtomicStoreInt( b3AtomicInt* a, int value )
 {
 #if defined( _MSC_VER )
@@ -163,3 +169,5 @@ static inline int64_t b3AtomicLoadI64( b3AtomicI64* a )
 #error "Unsupported platform"
 #endif
 }
+
+#endif // !B3_PLATFORM_PS2

@@ -562,9 +562,49 @@ void b3JoinThread( b3Thread* t )
 
 #else
 
+#if defined( B3_PLATFORM_PS2 )
+// R5900 CP0 Count is a 32-bit counter, nominally EE clock / 2.
+// The high bits are extended in software: call at least once per wrap
+// (~29 seconds at 147.456 MHz). This is single-worker only.
+#ifndef BOX3D_PS2_COUNT_HZ
+#define BOX3D_PS2_COUNT_HZ 147456000.0
+#endif
+static uint32_t s_ps2LastCount = 0;
+static uint64_t s_ps2ExtendedCount = 0;
+static bool s_ps2ClockInitialized = false;
+
 uint64_t b3GetTicks( void )
 {
-	return 0;
+    uint32_t now;
+    __asm__ volatile ("mfc0 %0, $9" : "=r" (now));
+    if (!s_ps2ClockInitialized)
+    {
+        s_ps2LastCount = now;
+        s_ps2ClockInitialized = true;
+        return 0;
+    }
+    s_ps2ExtendedCount += (uint32_t)(now - s_ps2LastCount);
+    s_ps2LastCount = now;
+    return s_ps2ExtendedCount;
+}
+
+float b3GetMilliseconds( uint64_t ticks )
+{
+    uint64_t now = b3GetTicks();
+    return (float)((double)(now - ticks) * (1000.0 / BOX3D_PS2_COUNT_HZ));
+}
+
+float b3GetMillisecondsAndReset( uint64_t* ticks )
+{
+    uint64_t now = b3GetTicks();
+    float elapsed = (float)((double)(now - *ticks) * (1000.0 / BOX3D_PS2_COUNT_HZ));
+    *ticks = now;
+    return elapsed;
+}
+#else
+uint64_t b3GetTicks( void )
+{
+    return 0;
 }
 
 float b3GetMilliseconds( uint64_t ticks )
@@ -575,9 +615,10 @@ float b3GetMilliseconds( uint64_t ticks )
 
 float b3GetMillisecondsAndReset( uint64_t* ticks )
 {
-	( (void)( ticks ) );
-	return 0.0f;
+    ( (void)( ticks ) );
+    return 0.0f;
 }
+#endif // B3_PLATFORM_PS2
 
 void b3Yield( void )
 {
@@ -652,9 +693,18 @@ typedef struct b3Thread
 
 b3Thread* b3CreateThread( b3ThreadFunction* function, void* context, const char* name )
 {
-	(void)name;
-	function( context );
-	b3Thread* t = b3Alloc( sizeof( b3Thread ) );
+    (void)name;
+#if defined( B3_PLATFORM_PS2 )
+    // Intentionally reject multithreading; never invoke worker inline because
+    // the scheduler's worker loop would block the caller indefinitely.
+    (void)function;
+    (void)context;
+    B3_ASSERT(false && "PS2 EE baseline does not support worker threads");
+    return NULL;
+#else
+    function( context );
+#endif
+    b3Thread* t = b3Alloc( sizeof( b3Thread ) );
 	t->dummy = 42;
 	return t;
 }
