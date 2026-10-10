@@ -1,0 +1,54 @@
+name: PS2 scalar baseline (host)
+
+on:
+  push:
+    branches: [experiment/ps2-ee-scalar]
+  pull_request:
+    paths: ['ps2/**', 'src/**', 'include/**', 'CMakeLists.txt', '.github/workflows/ps2-scalar-smoke.yml']
+  workflow_dispatch:
+
+jobs:
+  scalar-smoke:
+    name: scalar smoke (${{ matrix.config }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure without x86 SIMD
+        run: >-
+          cmake -S . -B build/ps2-smoke -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+          -DBUILD_SHARED_LIBS=OFF -DBOX3D_DISABLE_SIMD=ON -DBOX3D_AVX2=OFF
+          -DBOX3D_SAMPLES=OFF -DBOX3D_UNIT_TESTS=OFF -DBOX3D_PS2_SMOKE=ON
+      - name: Build
+        run: cmake --build build/ps2-smoke --parallel --target box3d_ps2_smoke box3d_ps2_count_wrap
+      - name: Test world simulation and resource cleanup
+        run: ./build/ps2-smoke/bin/box3d_ps2_smoke
+      - name: Test count wrap extension
+        run: ./build/ps2-smoke/bin/box3d_ps2_count_wrap
+
+      - name: Test PS2 GS helper regressions (host C17)
+        run: |
+          set -eu
+          for name in shadow_group pcss_filter_tiers kawase_layout shadow_penumbra unified_demo pcf_tent4; do
+            cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic "ps2/${name}_test.c" -lm -o "/tmp/b3_${name}_test"
+            "/tmp/b3_${name}_test"
+          done
+          cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic ps2/vu1_boxes_layout_test.c -lm -o /tmp/b3_vu1_boxes_layout
+          /tmp/b3_vu1_boxes_layout
+          cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic ps2/shadow_group_differential_test.c -o /tmp/b3_shadow_group_differential
+          /tmp/b3_shadow_group_differential
+          cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic ps2/shadow_project.c ps2/shadow_project_test.c -lm -o /tmp/b3_shadow_project_test
+          /tmp/b3_shadow_project_test
+      - name: Test VU0 micro ABI and host fallback driver (host C17)
+        run: |
+          cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic ps2/vu0_micro_solver_test.c -lm -o /tmp/b3_vu0_micro_test
+          /tmp/b3_vu0_micro_test
+          cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic ps2/vu0_sweep_test.c -lm -o /tmp/b3_vu0_sweep_test
+          /tmp/b3_vu0_sweep_test
+          cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic -c ps2/vu0_micro_solver.c -o /tmp/b3_vu0_micro_host_stub.o
+          cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic -c ps2/vu0_sweep_runtime.c -o /tmp/b3_vu0_sweep_host_stub.o

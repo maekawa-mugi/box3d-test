@@ -19,6 +19,9 @@ b3DeclareArray( b3MeshTriangle );
 b3DeclareArray( b3Vec3 );
 b3DeclareArray( b3Primitive );
 b3DeclareArrayNative( uint8_t );
+// Public mesh indices and weld buffers use int32_t, which can be long
+// (rather than int) with the PS2DEV R5900/newlib ABI.
+b3DeclareArrayNative( int32_t );
 
 #define B3_BIN_COUNT 8
 #define B3_DESIRED_TRIANGLES_PER_LEAF 4
@@ -1255,7 +1258,7 @@ b3MeshData* b3CreateGridMesh( int xCount, int zCount, float cellWidth, int mater
 	// Triangles
 	int triangleCount = 2 * xCount * zCount;
 
-	b3Array( int ) indices = { 0 };
+	b3Array( int32_t ) indices = { 0 };
 	b3Array_Resize( indices, 3 * triangleCount );
 
 	b3Array( uint8_t ) materialIndices = { 0 };
@@ -1356,7 +1359,7 @@ b3MeshData* b3CreateWaveMesh( int xCount, int zCount, float cellWidth, float amp
 	// Triangles
 	int triangleCount = 2 * xCount * zCount;
 
-	b3Array( int ) indices = { 0 };
+	b3Array( int32_t ) indices = { 0 };
 	b3Array_Resize( indices, 3 * triangleCount );
 
 	index = 0;
@@ -1425,7 +1428,7 @@ b3MeshData* b3CreateTorusMesh( int radialResolution, int tubularResolution, floa
 	}
 
 	// Triangles
-	b3Array( int ) indices = { 0 };
+	b3Array( int32_t ) indices = { 0 };
 	for ( int radialIndex1 = 0; radialIndex1 < radialResolution; radialIndex1++ )
 	{
 		int radialIndex2 = ( radialIndex1 + 1 ) % radialResolution;
@@ -1476,7 +1479,7 @@ b3MeshData* b3CreateBoxMesh( b3Vec3 center, b3Vec3 extent, bool identifyEdges )
 		vertices[i] = b3Add( vertices[i], center );
 	}
 
-	int indices[] = {
+	int32_t indices[] = {
 		0, 1, 3, 1, 2, 3, // front
 		0, 4, 1, 1, 4, 5, // top
 		0, 3, 7, 4, 0, 7, // right
@@ -1510,7 +1513,7 @@ b3MeshData* b3CreateHollowBoxMesh( b3Vec3 center, b3Vec3 extent )
 		vertices[i] = b3Add( vertices[i], center );
 	}
 
-	int indices[] = {
+	int32_t indices[] = {
 		3, 1, 0, 3, 2, 1, // front
 		1, 4, 0, 5, 4, 1, // top
 		7, 3, 0, 7, 0, 4, // right
@@ -1545,7 +1548,7 @@ b3MeshData* b3CreatePlatformMesh( b3Vec3 center, float height, float topWidth, f
 		vertices[i] = b3Add( vertices[i], center );
 	}
 
-	int indices[] = {
+	int32_t indices[] = {
 		0, 1, 3, 1, 2, 3, // front
 		0, 4, 1, 1, 4, 5, // top
 		0, 3, 7, 4, 0, 7, // right
@@ -1612,7 +1615,7 @@ b3MeshData* b3CreateMesh( const b3MeshDef* def, int* degenerateTriangleIndices, 
 	b3AABB meshBounds = B3_BOUNDS3_EMPTY;
 
 	// Clone indices and vertices to support welding
-	b3Array( int ) indices;
+	b3Array( int32_t ) indices;
 	b3Array_CreateN( indices, 3 * triangleCount );
 
 	b3Array( b3Vec3 ) vertices;

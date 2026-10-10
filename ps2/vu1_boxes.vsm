@@ -1,0 +1,103 @@
+; Box3D PS2 VU1: VIF1-unpacked 8 world vertices -> GS GIF PACKED.
+; 0..3 camera columns, 4 XY/Z scale, 5 XYZ offset
+; 16..23 box world corners, 24..29 flat RGBAQ colors
+; 32..39 projected GS PACKED XYZ2 qwords
+; 128..163 constant (corner index, face index) lookup
+; 256 GIF tag; 257..328 RGBAQ/XYZ2 vertex stream
+; One MSCAL per box and one XGKICK per box.
+        .vu
+        .align 4
+        .global B3Vu1Boxes_CodeStart
+        .global B3Vu1Boxes_CodeEnd
+        .global B3Vu1Boxes_RunStart
+B3Vu1Boxes_CodeStart:
+; VU1 program PC=0: minimal MSCAL/FLUSHE sanity check. This must
+; return without touching DMEM, GIF, or the perspective-division unit.
+; Exactly two 64-bit instructions precede the real transform entry.
+        NOP[E]                             NOP
+        NOP                                NOP
+B3Vu1Boxes_RunStart:
+        NOP                                lq          VF01,0(VI00)
+        NOP                                lq          VF02,1(VI00)
+        NOP                                lq          VF03,2(VI00)
+        NOP                                lq          VF04,3(VI00)
+        NOP                                lq          VF07,4(VI00)
+        NOP                                lq          VF08,5(VI00)
+        NOP                                iaddiu      VI01,VI00,16
+        NOP                                iaddiu      VI02,VI00,32
+        NOP                                iaddiu      VI07,VI00,24
+vu1_vertex_loop:
+        NOP                                lqi         VF05,(VI01++)
+        ; Explicit load/use spacing: lqi result must be visible in
+        ; the upper pipeline before the matrix multiply reads VF05.
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        mulax      ACC,VF01,VF05x          NOP
+        madday     ACC,VF02,VF05y          NOP
+        maddaz     ACC,VF03,VF05z          NOP
+        maddw      VF05,VF04,VF05w         NOP
+        NOP                                div         Q,VF00w,VF05z
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                waitq
+        mulq.w     VF06,VF00,Q             NOP
+        mulq.xy    VF05,VF05,Q             NOP
+        mul.xy     VF05,VF05,VF07          NOP
+        mulw.z     VF05,VF07,VF06          NOP
+        add.xyz    VF05,VF05,VF08          NOP
+        ftoi0.xyz  VF05,VF05               NOP
+        ; Upper FTOI0 result is not immediately available to SQI.
+        ; Store only after the VU1 conversion pipeline has retired.
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                sqi         VF05,(VI02++)
+        NOP                                ibne        VI01,VI07,vu1_vertex_loop
+        NOP                                NOP
+        NOP                                iaddiu      VI04,VI00,128
+        NOP                                iaddiu      VI05,VI00,256
+        NOP                                iaddiu      VI06,VI00,257
+        NOP                                iaddiu      VI12,VI00,164
+vu1_emit_loop:
+        NOP                                ilw.x       VI08,0(VI04)
+        NOP                                ilw.y       VI09,0(VI04)
+        ; VI08/VI09 originate from VU DMEM and require load spacing.
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                iaddiu      VI10,VI08,32
+        NOP                                iaddiu      VI11,VI09,24
+        NOP                                lq          VF09,0(VI10)
+        NOP                                lq          VF10,0(VI11)
+        ; SQI consumes the QW just loaded. Respect the LS pipeline.
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                sqi         VF10,(VI06++)
+        NOP                                sqi         VF09,(VI06++)
+        NOP                                iaddiu      VI04,VI04,1
+        NOP                                NOP
+        NOP                                ibne        VI04,VI12,vu1_emit_loop
+        NOP                                NOP
+        ; Camera constant DMEM[6].x selects whether to emit PATH1.
+        ; 0 = transform/assemble only (no XGKICK), 1 = actual GS draw.
+        ; This distinguishes a VIF/VU stall from a GIF PATH1 stall.
+        NOP                                ilw.x       VI14,6(VI00)
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                ibeq        VI14,VI00,vu1_done
+        NOP                                NOP
+        NOP                                xgkick      VI05
+vu1_done:
+        NOP[E]                             NOP
+        NOP                                NOP
+        .align 4
+B3Vu1Boxes_CodeEnd:

@@ -363,6 +363,15 @@ b3WorldId b3CreateWorld( const b3WorldDef* def )
 	world->userTreeTask = NULL;
 	world->userData = def->userData;
 
+#if defined( B3_PLATFORM_PS2 )
+    // No EE worker threads or external worker callbacks in this baseline.
+    // Always use Box3D's built-in serial task functions.
+    world->workerCount = 1;
+    world->enqueueTaskFcn = b3DefaultAddTaskFcn;
+    world->finishTaskFcn = b3DefaultFinishTaskFcn;
+    world->userTaskContext = NULL;
+    world->scheduler = NULL;
+#else
 	if ( def->workerCount > 0 && def->enqueueTask != NULL && def->finishTask != NULL )
 	{
 		// External task system
@@ -390,6 +399,8 @@ b3WorldId b3CreateWorld( const b3WorldDef* def )
 		world->userTaskContext = NULL;
 		world->scheduler = NULL;
 	}
+
+#endif // B3_PLATFORM_PS2
 
 	b3CreateWorkerContexts( world );
 
@@ -2277,6 +2288,10 @@ void b3World_SetWorkerCount( b3WorldId worldId, int count )
 		return;
 	}
 
+#if defined( B3_PLATFORM_PS2 )
+    // Plain-word atomics are only valid with a single EE worker.
+    count = 1;
+#endif
 	if ( count == world->workerCount )
 	{
 		return;

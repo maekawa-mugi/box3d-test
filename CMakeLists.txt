@@ -1,11 +1,17 @@
 ﻿cmake_minimum_required(VERSION 3.22)
 include(CMakeDependentOption)
 
+# The EE baseline is C-only. Do not require a PS2 C++ compiler just to
+# configure and build libbox3d.a (BOX3D_PS2 is supplied with -D at configure).
+set(BOX3D_PROJECT_LANGUAGES C CXX)
+if(BOX3D_PS2)
+    set(BOX3D_PROJECT_LANGUAGES C)
+endif()
 project(box3d
 	VERSION 0.1.0
 	DESCRIPTION "A 3D physics engine for games"
 	HOMEPAGE_URL "https://box2d.org"
-	LANGUAGES C CXX
+	LANGUAGES ${BOX3D_PROJECT_LANGUAGES}
 )
 
 # stuff to help debug cmake
@@ -92,6 +98,25 @@ option(BOX3D_DISABLE_SIMD "Disable SIMD math (slower)" OFF)
 option(BOX3D_AVX2 "Compile AVX2 kernels, selected at runtime on x86 CPUs that support them" ON)
 option(BOX3D_COMPILE_WARNING_AS_ERROR "Compile warnings as errors" OFF)
 option(BOX3D_DOUBLE_PRECISION "Enable double precision for large worlds" OFF)
+
+# Experimental PlayStation 2 EE target: start with the portable scalar backend.
+# No VU0/MMI acceleration is enabled at this stage.
+option(BOX3D_PS2 "Build the experimental PS2 EE single-worker port" OFF)
+if(BOX3D_PS2)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
+        message(FATAL_ERROR "BOX3D_PS2 requires the PS2 EE toolchain file (cmake/toolchains/ps2-ee.cmake)")
+    endif()
+    set(BOX3D_DISABLE_SIMD ON CACHE BOOL "PS2 scalar baseline" FORCE)
+    set(BOX3D_AVX2 OFF CACHE BOOL "AVX2 is not available on PS2" FORCE)
+    set(BOX3D_DOUBLE_PRECISION OFF CACHE BOOL "PS2 baseline uses float" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "PS2 static library" FORCE)
+    set(BOX3D_SAMPLES OFF CACHE BOOL "PS2: no sokol samples" FORCE)
+    set(BOX3D_UNIT_TESTS OFF CACHE BOOL "PS2: desktop tests disabled" FORCE)
+    set(BOX3D_BENCHMARKS OFF CACHE BOOL "PS2: desktop benchmarks disabled" FORCE)
+    set(BOX3D_DOCS OFF CACHE BOOL "PS2: no Doxygen" FORCE)
+    set(BOX3D_PROFILE OFF CACHE BOOL "PS2: no Tracy" FORCE)
+    message(STATUS "Box3D PS2: single-worker scalar EE build (no SIMD/VU0 yet)")
+endif()
 
 # These are read by the library build, so they must precede add_subdirectory(src),
 # otherwise the first configure and a re-configure produce different libraries.
@@ -190,3 +215,18 @@ endif()
 # https://stackoverflow.com/questions/72635402/how-to-set-working-directory-in-cmake-visual-studio-2022
 # launch.vs.json
 # "currentDir": "${workspaceRoot}"
+
+# Optional headless gravity/contact regression test for EE and host compilers.
+option(BOX3D_PS2_SMOKE "Build the PS2-port headless smoke test" OFF)
+if(BOX3D_PS2_SMOKE)
+    if(BOX3D_PS2)
+        message(FATAL_ERROR "Build the PS2 smoke ELF with ps2/Makefile and PS2SDK, not CMake.")
+    endif()
+    add_executable(box3d_ps2_smoke ps2/smoke.c)
+    target_link_libraries(box3d_ps2_smoke PRIVATE box3d::box3d)
+
+    # Host-only test of the CP0 Count software extension.
+    add_executable(box3d_ps2_count_wrap ps2/count_wrap_test.c)
+    target_include_directories(box3d_ps2_count_wrap PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    set_target_properties(box3d_ps2_count_wrap PROPERTIES C_STANDARD 17 C_STANDARD_REQUIRED YES)
+endif()

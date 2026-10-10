@@ -33,6 +33,9 @@
 #endif
 
 #include "platform.h"
+#if defined( BOX3D_PS2 )
+#include <malloc.h>
+#endif
 
 #include <stdio.h>
 
@@ -159,6 +162,9 @@ void* b3Alloc( size_t size )
 
 #ifdef B3_PLATFORM_WINDOWS
 	void* ptr = _aligned_malloc( alignedSize, B3_ALIGNMENT );
+#elif defined( B3_PLATFORM_PS2 )
+    // ps2sdk/newlib provides memalign; aligned_alloc is not universal here.
+    void* ptr = memalign( B3_ALIGNMENT, alignedSize );
 #elif defined( B3_PLATFORM_ANDROID )
 	void* ptr = NULL;
 	if ( posix_memalign( &ptr, B3_ALIGNMENT, alignedSize ) != 0 )

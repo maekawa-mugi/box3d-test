@@ -1,0 +1,88 @@
+; SPDX-License-Identifier: MIT
+; Real VU0 micro mode, 16 independent 4-lane contact normal updates.
+; VU0 DMEM QW[0] reserved, QW[1..208] are 16 records of 13 QWs.
+; Inputs +0..7: old, mass, speed, bias, pointSum, manifoldSum,
+;               twistSum, leverArm
+; Outputs +8..12: new, delta, pointSum, manifoldSum, twistSum.
+; Each microprogram invocation covers 1..16 independent SIMD groups
+; (4..64 contact lanes). Group count comes from DMEM[0].x.
+; Never use VF00.w as zero: VF00.w is constant 1.
+        .vu
+        .align 4
+        .global B3Vu0Contacts_CodeStart
+        .global B3Vu0Contacts_CodeEnd
+B3Vu0Contacts_CodeStart:
+        NOP                                iaddiu VI01,VI00,1
+        ; Group count is held in VU0 DMEM[0].x, 1..16.
+        ; The original 16-group differential path uses the same code.
+        NOP                                ilw.x VI04,0(VI00)
+        ; Keep the last-group sentinel in a separate stable VI register.
+        ; The live 1-group path can then exit without reading a freshly
+        ; decremented loop counter (and without touching a second record).
+        NOP                                iaddiu VI03,VI00,1
+vu0_contact_loop:
+        NOP                                lq VF01,0(VI01)
+        NOP                                lq VF02,1(VI01)
+        NOP                                lq VF03,2(VI01)
+        NOP                                lq VF04,3(VI01)
+        NOP                                lq VF05,4(VI01)
+        NOP                                lq VF06,5(VI01)
+        NOP                                lq VF07,6(VI01)
+        NOP                                lq VF08,7(VI01)
+        ; Conservative load-to-upper scheduling before first use.
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        add.xyzw   VF09,VF03,VF04          NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        mul.xyzw   VF10,VF02,VF09          NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        sub.xyzw   VF11,VF01,VF10          NOP
+        sub.xyzw   VF20,VF01,VF01          NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        max.xyzw   VF11,VF11,VF20          NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        sub.xyzw   VF12,VF11,VF01          NOP
+        add.xyzw   VF13,VF05,VF11          NOP
+        add.xyzw   VF14,VF06,VF11          NOP
+        mul.xyzw   VF15,VF08,VF11          NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        add.xyzw   VF15,VF07,VF15          NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                sq VF11,8(VI01)
+        NOP                                sq VF12,9(VI01)
+        NOP                                sq VF13,10(VI01)
+        NOP                                sq VF14,11(VI01)
+        NOP                                sq VF15,12(VI01)
+        NOP                                iaddiu VI01,VI01,13
+        ; Test the *stable* current count before decrementing. In
+        ; particular a 1-group VCALLMS must never enter record #2.
+        NOP                                ibeq VI04,VI03,vu0_contact_done
+        NOP                                NOP
+        NOP                                iaddiu VI04,VI04,-1
+        ; The integer counter must reach VI04 before IBNE samples it.
+        ; With no gap the last iteration can branch using the previous
+        ; value, processing an extra record outside the active batch.
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                ibne VI04,VI00,vu0_contact_loop
+        NOP                                NOP
+vu0_contact_done:
+        NOP[E]                             NOP
+        NOP                                NOP
+        .align 4
+B3Vu0Contacts_CodeEnd:

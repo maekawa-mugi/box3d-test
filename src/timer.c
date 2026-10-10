@@ -562,9 +562,50 @@ void b3JoinThread( b3Thread* t )
 
 #else
 
+#if defined( B3_PLATFORM_PS2 )
+// EE Core User Manual, CPR[0,09]: Count increments every CPU cycle.
+// At a nominal 294.912 MHz it wraps about every 14.56 s, not 29 s.
+// The software high bits require at least one read per counter revolution.
+// This is single-worker only and intended for privileged PS2SDK homebrew.
+#ifndef BOX3D_PS2_COUNT_HZ
+#define BOX3D_PS2_COUNT_HZ 294912000.0
+#endif
+#include "ps2_count.h"
+
+static b3Ps2CountState s_ps2Count = { 0 };
+
 uint64_t b3GetTicks( void )
 {
-	return 0;
+    uint32_t now;
+    // Follow the validated libc arena read-only CP0 sequence. Do not reset
+    // Count or Compare; the PS2SDK kernel may be using its timer interrupt.
+    __asm__ volatile (
+        ".set push\n\t"
+        ".set noreorder\n\t"
+        "mfc0 %0, $9\n\t"
+        "nop\n\t"
+        ".set pop"
+        : "=r" (now) : : "memory");
+    return b3Ps2ExtendCount( &s_ps2Count, now );
+}
+
+float b3GetMilliseconds( uint64_t ticks )
+{
+    uint64_t now = b3GetTicks();
+    return (float)((double)(now - ticks) * (1000.0 / BOX3D_PS2_COUNT_HZ));
+}
+
+float b3GetMillisecondsAndReset( uint64_t* ticks )
+{
+    uint64_t now = b3GetTicks();
+    float elapsed = (float)((double)(now - *ticks) * (1000.0 / BOX3D_PS2_COUNT_HZ));
+    *ticks = now;
+    return elapsed;
+}
+#else
+uint64_t b3GetTicks( void )
+{
+    return 0;
 }
 
 float b3GetMilliseconds( uint64_t ticks )
@@ -575,9 +616,10 @@ float b3GetMilliseconds( uint64_t ticks )
 
 float b3GetMillisecondsAndReset( uint64_t* ticks )
 {
-	( (void)( ticks ) );
-	return 0.0f;
+    ( (void)( ticks ) );
+    return 0.0f;
 }
+#endif // B3_PLATFORM_PS2
 
 void b3Yield( void )
 {
@@ -652,9 +694,18 @@ typedef struct b3Thread
 
 b3Thread* b3CreateThread( b3ThreadFunction* function, void* context, const char* name )
 {
-	(void)name;
-	function( context );
-	b3Thread* t = b3Alloc( sizeof( b3Thread ) );
+    (void)name;
+#if defined( B3_PLATFORM_PS2 )
+    // Intentionally reject multithreading; never invoke worker inline because
+    // the scheduler's worker loop would block the caller indefinitely.
+    (void)function;
+    (void)context;
+    B3_ASSERT(false && "PS2 EE baseline does not support worker threads");
+    return NULL;
+#else
+    function( context );
+#endif
+    b3Thread* t = b3Alloc( sizeof( b3Thread ) );
 	t->dummy = 42;
 	return t;
 }

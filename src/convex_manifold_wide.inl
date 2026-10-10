@@ -733,11 +733,11 @@ b3AxisQuery B3_WIDE( b3ComputeSeparatingAxis )( const b3HullData* hullA, const b
 			b3FloatW tol = b3LoadW( aTol + i );
 
 			// CBA = C.dir, DBA = D.dir, where dir = B_x_A
-			b3FloatW CBA = b3DotW( C, d );
-			b3FloatW DBA = b3DotW( D, d );
+			b3FloatW CBA, DBA;
+			b3Dot2W( C, d, D, d, &CBA, &DBA );
 			// ADC = n0.DC, BDC = n1.DC, where DC = D_x_C
-			b3FloatW ADC = b3DotW( n0, DC );
-			b3FloatW BDC = b3DotW( n1, DC );
+			b3FloatW ADC, BDC;
+			b3Dot2W( n0, DC, n1, DC, &ADC, &BDC );
 
 			// Gauss map arc crossing test, CBA*DBA<eps and ADC*BDC<eps and CBA*BDC<eps
 			b3FloatW m1 = b3LessThanW( b3MulW( CBA, DBA ), EPS );

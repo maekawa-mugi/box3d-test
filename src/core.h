@@ -16,7 +16,9 @@
 #endif
 
 // Define platform
-#if defined(_WIN32) || defined(_WIN64)
+#if defined( BOX3D_PS2 )
+    #define B3_PLATFORM_PS2
+#elif defined(_WIN32) || defined(_WIN64)
 	#define B3_PLATFORM_WINDOWS
 #elif defined( __ANDROID__ )
 	#define B3_PLATFORM_ANDROID
@@ -42,8 +44,10 @@
 	#define B3_CPU_ARM
 #elif defined( __EMSCRIPTEN__ )
 	#define B3_CPU_WASM
+#elif defined( B3_PLATFORM_PS2 )
+    #define B3_CPU_MIPS
 #else
-	#define B3_CPU_UNKNOWN
+    #define B3_CPU_UNKNOWN
 #endif
 
 // Define SIMD

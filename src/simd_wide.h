@@ -66,3 +66,68 @@ typedef B3_WIDE( b3Vec3 ) b3Vec3W;
 #define b3AddVW B3_WIDE( b3AddV )
 #define b3DotW B3_WIDE( b3Dot )
 #define b3CrossW B3_WIDE( b3Cross )
+
+// Two independent dot products. Runtime modes 2 and 3 fuse the work into
+// one pipelined VU0 macro invocation. Other builds and modes retain the
+// original two scalar/legacy dots with identical arithmetic association.
+static inline void b3Dot2W( b3Vec3W a0, b3Vec3W b0, b3Vec3W a1, b3Vec3W b1,
+                            b3FloatW* out0, b3FloatW* out1 )
+{
+#if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
+    if ( b3Ps2VU0MacroModeMatches( b3Ps2GetVU0Enabled(), 2 ) )
+    {
+        b3DotPairW4( a0, b0, a1, b1, out0, out1 );
+        return;
+    }
+#endif
+    *out0 = b3DotW( a0, b0 );
+    *out1 = b3DotW( a1, b1 );
+}
+
+
+// Additional preparation-stage independent dot pairs, enabled only in
+// experimental mode 3. Mode 2 remains bit-for-bit the previous PS2
+// paired-backend implementation to allow direct A/B timing without a
+// different scalar baseline or unrelated microbenchmark overhead.
+static inline void b3Dot2WExtended( b3Vec3W a0, b3Vec3W b0, b3Vec3W a1, b3Vec3W b1,
+                                    b3FloatW* out0, b3FloatW* out1 )
+{
+#if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
+    if ( b3Ps2VU0MacroModeMatches( b3Ps2GetVU0Enabled(), 3 ) )
+    {
+        b3Ps2RecordVU0ExtendedPair();
+        b3DotPairW4( a0, b0, a1, b1, out0, out1 );
+        return;
+    }
+#endif
+    *out0 = b3DotW( a0, b0 );
+    *out1 = b3DotW( a1, b1 );
+}
+
+// Many friction operations dot the *same* relative velocity against two
+// tangent directions. For mode 4 load velocity XYZ only once into VU0;
+// other modes retain the previous generic pair (or scalar) path.
+static inline void b3Dot2SharedW( b3Vec3W shared, b3Vec3W b0, b3Vec3W b1,
+                                  b3FloatW* out0, b3FloatW* out1 )
+{
+#if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
+    if ( b3Ps2VU0MacroModeMatches( b3Ps2GetVU0Enabled(), 4 ) )
+    {
+        b3Ps2VU0SharedDotData s;
+        b3StoreW4( s.sharedX, shared.X );
+        b3StoreW4( s.sharedY, shared.Y );
+        b3StoreW4( s.sharedZ, shared.Z );
+        b3StoreW4( s.b0x, b0.X );
+        b3StoreW4( s.b0y, b0.Y );
+        b3StoreW4( s.b0z, b0.Z );
+        b3StoreW4( s.b1x, b1.X );
+        b3StoreW4( s.b1y, b1.Y );
+        b3StoreW4( s.b1z, b1.Z );
+        b3Ps2VU0SharedDot4( &s );
+        *out0 = b3LoadW4( s.out0 );
+        *out1 = b3LoadW4( s.out1 );
+        return;
+    }
+#endif
+    b3Dot2W( shared, b0, shared, b1, out0, out1 );
+}

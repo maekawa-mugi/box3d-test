@@ -9,6 +9,10 @@
 
 #include <stdbool.h>
 
+#if defined( BOX3D_PS2 )
+#include "ps2_vu0.h"
+#endif
+
 #if defined( B3_SIMD_ENABLED )
 
 #if defined( B3_SIMD_NEON )
@@ -273,8 +277,51 @@ static inline b3Vec3W4 b3AddVW4( b3Vec3W4 a, b3Vec3W4 b )
 
 static inline b3FloatW4 b3DotW4( b3Vec3W4 a, b3Vec3W4 b )
 {
+#if defined( BOX3D_PS2 )
+	if ( b3Ps2GetVU0Enabled() == 1 )
+	{
+		// Pack six SOA float4 vectors into aligned scratch for safe LQC2.
+		// The transfer overhead is intentionally included in whole-engine
+		// measurements. A faster in-place VF design is future work.
+		b3Ps2VU0Dot4Data s;
+		b3StoreW4( s.ax, a.X );
+		b3StoreW4( s.bx, b.X );
+		b3StoreW4( s.ay, a.Y );
+		b3StoreW4( s.by, b.Y );
+		b3StoreW4( s.az, a.Z );
+		b3StoreW4( s.bz, b.Z );
+		b3Ps2VU0Dot4( &s );
+		return b3LoadW4( s.out );
+	}
+#endif
 	return b3AddW4( b3AddW4( b3MulW4( a.X, b.X ), b3MulW4( a.Y, b.Y ) ), b3MulW4( a.Z, b.Z ) );
 }
+
+#if defined( BOX3D_PS2 )
+// Pair mode skips single-dot VU0 transfers, but batches two independent
+// dot4 operations from hot narrowphase and contact solver sites.
+static inline void b3DotPairW4( b3Vec3W4 a0, b3Vec3W4 b0,
+                                b3Vec3W4 a1, b3Vec3W4 b1,
+                                b3FloatW4* out0, b3FloatW4* out1 )
+{
+    b3Ps2VU0Dot4PairData s;
+    b3StoreW4( s.pair[0].ax, a0.X );
+    b3StoreW4( s.pair[0].bx, b0.X );
+    b3StoreW4( s.pair[0].ay, a0.Y );
+    b3StoreW4( s.pair[0].by, b0.Y );
+    b3StoreW4( s.pair[0].az, a0.Z );
+    b3StoreW4( s.pair[0].bz, b0.Z );
+    b3StoreW4( s.pair[1].ax, a1.X );
+    b3StoreW4( s.pair[1].bx, b1.X );
+    b3StoreW4( s.pair[1].ay, a1.Y );
+    b3StoreW4( s.pair[1].by, b1.Y );
+    b3StoreW4( s.pair[1].az, a1.Z );
+    b3StoreW4( s.pair[1].bz, b1.Z );
+    b3Ps2VU0Dot4Pair( &s );
+    *out0 = b3LoadW4( s.pair[0].out );
+    *out1 = b3LoadW4( s.pair[1].out );
+}
+#endif
 
 static inline b3Vec3W4 b3CrossW4( b3Vec3W4 a, b3Vec3W4 b )
 {
