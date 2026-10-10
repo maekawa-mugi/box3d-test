@@ -9,6 +9,9 @@
 #include "box3d/box3d.h"
 #include "box3d/math_functions.h"
 #include "gs_native.h"
+#if defined(BOX3D_PS2_UNIFIED)
+#include "unified_demo.h"
+#endif
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
 #include "ee_clock.h"
 #endif
@@ -33,13 +36,13 @@
 #include <stdio.h>
 
 #if defined(BOX3D_GS_PROGRESSIVE)
-#define SCENE_COUNT 12
+#define SCENE_COUNT B3_PS2_DEMO_SCENES
 #else
 #define SCENE_COUNT 3
 #endif
 #if defined(BOX3D_GS_OFFICIAL)
 #if defined(BOX3D_PS2_UNIFIED)
-#define MAX_BOXES 410
+#define MAX_BOXES B3_PS2_DEMO_MAX_BODIES
 #else
 #define MAX_BOXES 48
 #endif
@@ -421,8 +424,7 @@ static void scene_create(int kind)
         // Benchmark/Large Pyramid and Wide Pyramid workloads. Four
         // progressively denser dynamic-box grids, all using the real
         // Box3D solver and the SAME native GS/PCSS render path.
-        static const int sides[4]={8,12,16,20};
-        int side=sides[kind-8];
+        int side=b3Ps2DemoStressSide(kind-8);
         int count=side*side; // 64, 144, 256, 400
         add_box(0,pt(0,-1,0),pt(40,1,40),identity,noSpin,
                 0.65f,173,183,188);
@@ -1065,13 +1067,23 @@ int main(void)
 #endif
         if(direction!=0)
         {
+#if defined(BOX3D_PS2_UNIFIED)
+            int newKind=b3Ps2DemoNextPage(s_scene.kind,direction);
+#else
             int newKind=(s_scene.kind+SCENE_COUNT+direction)%SCENE_COUNT;
+#endif
             b3DestroyWorld(s_scene.world);
             scene_create(newKind);
             s_frame=0; // full duration after manually changing scenes
             printf("BOX3D_PAD_SCENE,dir=%d,scene=%d\n",direction,newKind);
         }
-        else if(s_frame>0 && s_frame%SCENE_FRAMES==0)
+        else if(
+#if defined(BOX3D_PS2_UNIFIED)
+                // Manual pagination should KEEP the chosen stress tier
+                // for as long as the D-pad controller is active.
+                !s_padReady &&
+#endif
+                s_frame>0 && s_frame%SCENE_FRAMES==0)
         {
             b3DestroyWorld(s_scene.world);
             scene_create((s_scene.kind+1)%SCENE_COUNT);

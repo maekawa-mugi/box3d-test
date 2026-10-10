@@ -51,8 +51,10 @@ This is not full-scene MSAA.
 
 PS2 D-pad **LEFT** goes to the previous scene; **RIGHT** to the
 next. Each newly pressed direction immediately recreates the
-Box3D world. Held buttons do not auto-repeat. The 600-frame
-automatic tour still runs when idle.
+Box3D world. Held buttons do not auto-repeat. With a controller initialized,
+the current page remains selected until the next D-pad press, allowing
+long benchmark runs. If libpad initialization fails, the fallback
+600-frame automatic tour remains active.
 
 Page 1 is Box Stack; page 8 is Ragdoll/Box with the original
 12-body `shared/human.c` jointed physics (simple GS box proxies).
@@ -105,3 +107,11 @@ The historical multi-ELF experiments and internal design notes
 remain archived in `ps2/NATIVE_GS_SAMPLES.md` and
 `ps2/PROGRESSIVE_GS.md`, but are **not current build instructions**.
 VU1 batch transforms and full upstream scene parity remain pending.
+
+Portable C17 page/benchmark sizing regression:
+
+```sh
+cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic \
+  ps2/unified_demo_test.c -o /tmp/b3_ps2_demo_test
+/tmp/b3_ps2_demo_test
+```
