@@ -12,6 +12,7 @@
 #include <packet2.h>
 #include <packet2_utils.h>
 #include <packet2_vif.h>
+#include <vif_registers.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <math.h>
@@ -102,6 +103,37 @@ int b3Vu1BoxesInit(void)
         puts("BOX3D_VU1_FAIL,microcode_upload_timeout");
         return 0;
     }
+
+    // The VIF DMA channel finishing is NOT proof that MPG wrote the
+    // intended instructions. EE can inspect VU1 micromemory while idle.
+    // Fail safely before MSCAL rather than executing unknown microcode.
+    const u32* image=&B3Vu1Boxes_CodeStart;
+    const uintptr_t imageBytes=
+        (uintptr_t)&B3Vu1Boxes_CodeEnd-(uintptr_t)image;
+    if(imageBytes<16 || imageBytes>16384 || (imageBytes&7u))
+    {
+        printf("BOX3D_VU1_FAIL,microcode_size,bytes=%lu\n",
+               (unsigned long)imageBytes);
+        return 0;
+    }
+    const volatile u32* vuCode=(const volatile u32*)VU1_MICROMEM1_START;
+    const unsigned instructionWords=(unsigned)(imageBytes/sizeof(u32));
+    printf("BOX3D_VU1_IMAGE,bytes=%lu,words=%u,boot_pc=0,transform_pc=%u,first=%08x:%08x,vif_stat=%08x,vif_err=%08x\n",
+           (unsigned long)imageBytes,instructionWords,
+           s_mainProgramPc,(unsigned)image[0],(unsigned)image[1],
+           (unsigned)VIF1_STAT,(unsigned)VIF1_ERR);
+    for(unsigned i=0;i<instructionWords;++i)
+    {
+        u32 received=vuCode[i];
+        if(received!=image[i])
+        {
+            printf("BOX3D_VU1_FAIL,mpg_readback,word=%u,want=%08x,got=%08x,vif_code=%08x,vif_stat=%08x\n",
+                   i,(unsigned)image[i],(unsigned)received,
+                   (unsigned)VIF1_CODE,(unsigned)VIF1_STAT);
+            return 0;
+        }
+    }
+    puts("BOX3D_VU1_IMAGE,readback=ok");
 
     int k=0;
     for(int face=0;face<6;++face)
@@ -260,15 +292,21 @@ int b3Vu1BoxesBootTest(void)
     packet2_vif_nop(s_vifPacket,0);
     packet2_chain_close_tag(s_vifPacket);
     packet2_utils_vu_add_end_tag(s_vifPacket);
+    printf("BOX3D_VU1_BOOT,pre_mscal,vif_stat=%08x,vif_err=%08x,vif_code=%08x,pc=0\n",
+           (unsigned)VIF1_STAT,(unsigned)VIF1_ERR,
+           (unsigned)VIF1_CODE);
     puts("BOX3D_VU1_PHASE,boot_mscal_start");
     dma_channel_send_packet2(s_vifPacket,DMA_CHANNEL_VIF1,1);
     if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
     {
-        puts("BOX3D_VU1_FAIL,boot_mscal_timeout");
+        printf("BOX3D_VU1_FAIL,boot_mscal_timeout,vif_stat=%08x,vif_err=%08x,vif_code=%08x\n",
+               (unsigned)VIF1_STAT,(unsigned)VIF1_ERR,
+               (unsigned)VIF1_CODE);
         s_ready=0;
         return 0;
     }
-    puts("BOX3D_VU1_PHASE,boot_mscal_done");
+    printf("BOX3D_VU1_PHASE,boot_mscal_done,vif_stat=%08x,vif_err=%08x\n",
+           (unsigned)VIF1_STAT,(unsigned)VIF1_ERR);
     return 1;
 }
 

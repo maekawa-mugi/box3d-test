@@ -547,3 +547,36 @@ Revised TRIANGLE stages on stress scenes:
 Stop at the first failure and check the last
 `BOX3D_VU1_PHASE` line. The initial D0 EE renderer and PCSS are
 unchanged. Hardware/PCSX2 validation is still pending.
+
+## 2026-10-10: VU1 BOOT crash to BIOS/browser
+
+In PCSX2, all stress scenes pass PATH3 and VIF, but the BOOT press
+blacks out and returns to the browser. The C `main` has an infinite
+loop, so an explicit `return 1` from `main` is not supported by
+the code. This is treated as a possible VU1, EE exception, DMA or
+emulator failure, not a proven ordinary program exit.
+
+To prevent blindly executing corrupted VU1 code, after the MPG
+upload finishes `b3Vu1BoxesInit` now **reads VU1 micro memory at
+`VU1_MICROMEM1_START` and checks every uploaded u32 against the DVP
+image**. It prints `BOX3D_VU1_IMAGE,readback=ok` or
+`BOX3D_VU1_FAIL,mpg_readback`, including the first mismatched word,
+and disables the VU1 path on mismatch. The boot attempt logs
+`VIF1_STAT`, `VIF1_ERR` and `VIF1_CODE` before MSCAL and on
+return/timeout.
+
+For reliable observability, the selector inserts a **BOOT ARM** stage
+after VIF. BOOT ARM only changes the HUD; it invokes no VU
+microcode. Press TRIANGLE again to run **BOOT**. BOOT is now a
+**one-shot** per selection, not an MSCAL every subsequent frame.
+
+Stress scene sequence:
+`D0 -> ACK -> PATH3 -> VIF -> BOOT ARM -> BOOT -> VUONLY
+ -> D1 -> D8 -> D400`.
+
+For reproduction, capture the EE/PCSX2 console starting with
+`BOX3D_VU1_IMAGE` and ending at the last `BOX3D_VU1_BOOT`
+or `BOX3D_VU1_PHASE` log. If the emulator returns to the BIOS
+browser, check PCSX2 logs for EE exception details too. The root
+cause is still open until microcode upload / MSCAL completes in PCSX2.
+D0 and PCSS remain unchanged.
