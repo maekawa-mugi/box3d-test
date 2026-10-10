@@ -33,12 +33,16 @@
 #include <stdio.h>
 
 #if defined(BOX3D_GS_PROGRESSIVE)
-#define SCENE_COUNT 8
+#define SCENE_COUNT 12
 #else
 #define SCENE_COUNT 3
 #endif
 #if defined(BOX3D_GS_OFFICIAL)
+#if defined(BOX3D_PS2_UNIFIED)
+#define MAX_BOXES 410
+#else
 #define MAX_BOXES 48
+#endif
 #else
 #define MAX_BOXES 20
 #endif
@@ -405,6 +409,38 @@ static void scene_create(int kind)
         s_scene.camera=b3GsLookAt(pt(4.2f,5.0f,7.0f),pt(0,1.4f,0),260);
         puts("BOX3D_SAMPLE_SCENE,Ragdoll/Box,bones=12,joints=11,origin=shared/human.c");
     }
+#if defined(BOX3D_PS2_UNIFIED)
+    else if(kind>=8 && kind<=11)
+    {
+        // Benchmark/Many Bodies stress presets, inspired by upstream
+        // Benchmark/Large Pyramid and Wide Pyramid workloads. Four
+        // progressively denser dynamic-box grids, all using the real
+        // Box3D solver and the SAME native GS/PCSS render path.
+        static const int sides[4]={8,12,16,20};
+        int side=sides[kind-8];
+        int count=side*side; // 64, 144, 256, 400
+        add_box(0,pt(0,-1,0),pt(40,1,40),identity,noSpin,
+                0.65f,173,183,188);
+        float spacing=1.04f;
+        for(int z=0;z<side;++z)
+        for(int x=0;x<side;++x)
+        {
+            float px=((float)x-0.5f*(float)(side-1))*spacing;
+            float pz=((float)z-0.5f*(float)(side-1))*spacing;
+            // Stagger the drop heights to maintain contacts and
+            // broadphase movement instead of a perfectly static grid.
+            float py=1.0f+0.65f*(float)((x*7+z*11)%8);
+            add_box(1,pt(px,py,pz),pt(0.48f,0.48f,0.48f),
+                    identity,noSpin,0.65f,
+                    (uint8_t)(148+(x*13)%64),
+                    (uint8_t)(155+(z*11)%54),
+                    (uint8_t)(184+(x+z)%34));
+        }
+        s_scene.camera=b3GsLookAt(pt(29,31,38),pt(0,1.9f,0),300);
+        printf("BOX3D_STRESS_SCENE,boxes=%d,side=%d,real_dynamic_bodies=%d\n",
+               count,side,count);
+    }
+#endif
 #endif
 #if defined(BOX3D_GS_PROGRESSIVE)
     // Desktop sample cameras use 320x224 reference focal parameters.
@@ -489,6 +525,13 @@ static void draw_box(const SceneBody* body)
                           verts[quad[3]],rr,gg,bb);
         }
     }
+#endif
+    // The stress scenes intentionally omit tiny edge strokes to
+    // preserve GS GIF packet capacity for the actual solid geometry
+    // and expensive Box3D contact solver at 400 bodies. Silhouette
+    // AA1 remains enabled for all regular scenes.
+#if defined(BOX3D_PS2_UNIFIED)
+    if(s_scene.kind>=8)return;
 #endif
     for(int j=0;j<12;++j)
     {
@@ -823,7 +866,12 @@ static void render_official_hud(void)
     const char* sceneNames[]={"BOX STACK","INCLINED PLANE",
                              "SPINNING BOOKS","RESTITUTION",
                              "SLIDE TWIST","CONVEYOR BELT","FAR STACK",
-                             "RAGDOLL BOX"};
+                             "RAGDOLL BOX"
+#if defined(BOX3D_PS2_UNIFIED)
+                             ,"BENCH 64 BOX","BENCH 144 BOX",
+                             "BENCH 256 BOX","BENCH 400 BOX"
+#endif
+                             };
 #else
     const char* sceneNames[]={"BOX STACK","INCLINED PLANE","SPINNING BOOKS"};
 #endif
@@ -831,9 +879,18 @@ static void render_official_hud(void)
     // information, but all glyph pixels are native GS sprites.
     b3GsOverlayBegin();
 #if defined(BOX3D_GS_PROGRESSIVE)
+#if defined(BOX3D_PS2_UNIFIED)
+    b3GsOverlayPanel(14,14,348,142);
+    b3GsOverlayText(28,24,"BOX3D PS2 480P",239,245,247);
+    b3GsOverlayText(28,53,sceneNames[s_scene.kind],189,214,223);
+    char page[48];
+    snprintf(page,sizeof(page),"PAGE %d/%d  PCSS",s_scene.kind+1,SCENE_COUNT);
+    b3GsOverlayText(28,82,page,221,233,244);
+#else
     b3GsOverlayPanel(14,14,310,104);
     b3GsOverlayText(28,24,"BOX3D   PS2",239,245,247);
     b3GsOverlayText(28,53,sceneNames[s_scene.kind],189,214,223);
+#endif
 #else
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
     b3GsOverlayPanel(7,7,152,49);
@@ -844,9 +901,13 @@ static void render_official_hud(void)
     b3GsOverlayText(14,25,sceneNames[s_scene.kind],189,214,223);
 #endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
+#if defined(BOX3D_PS2_UNIFIED)
+    b3GsOverlayText(28,112,"PCF FILTER  PCSS RADIUS",188,226,240);
+#else
     b3GsOverlayText(14,37,"GS PCSS HEIGHT",188,226,240);
     b3GsOverlayPanel(206,184,106,30);
     b3GsOverlayText(214,195,"PCSS 3D",250,236,130);
+#endif
 #elif defined(BOX3D_GS_PCF_SHADOWS)
 #if defined(BOX3D_GS_PCF_4TAP)
 #if defined(BOX3D_GS_PROGRESSIVE)
@@ -952,7 +1013,12 @@ int main(void)
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
 #if defined(BOX3D_GS_PCSS_SHADOWS)
+#if defined(BOX3D_PS2_UNIFIED)
+    puts("BOX3D_UNIFIED,video=640x480p,shadow=PCSS,pcf_filter=4_or_21_bilinear,pagination=dpad,stress=64_144_256_400");
+    puts("BOX3D_SHADOW_FILTER,PCSS_BUCKETS,source=640x480,radius=1..5,pcf=bilinear");
+#else
     puts("BOX3D_SHADOW_FILTER,PCSS_INSPIRED_PER_CASTER,source=320x224,radius=1..5,taps=9_or_21");
+#endif
 #elif defined(BOX3D_GS_PCF_SHADOWS)
 #if defined(BOX3D_GS_PCF_4TAP)
     printf("BOX3D_SHADOW_FILTER,PCF_4_BILINEAR,source=%dx%d,radius=1px,weight_sum=96\n",
