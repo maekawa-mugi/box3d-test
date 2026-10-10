@@ -64,6 +64,13 @@ vu0_contact_loop:
         NOP                                sq VF15,12(VI01)
         NOP                                iaddiu VI01,VI01,13
         NOP                                iaddiu VI04,VI04,-1
+        ; The integer counter must reach VI04 before IBNE samples it.
+        ; With no gap the last iteration can branch using the previous
+        ; value, processing an extra record outside the active batch.
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
         NOP                                ibne VI04,VI00,vu0_contact_loop
         NOP                                NOP
         NOP[E]                             NOP

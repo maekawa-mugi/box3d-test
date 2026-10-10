@@ -1372,9 +1372,10 @@ static void render_official_hud(void)
     b3GsOverlayText(390,82,
         b3Ps2GetVU0Enabled()==6?"TRIANGLE VU0 MIX":"TRIANGLE VU0 OFF",
         255,238,132);
+    int microReady=s_vu0MicroPassed&&b3Vu0MicroIsReady();
     b3GsOverlayText(390,110,
-        s_vu0MicroPassed?"VU0 MICRO READY":"VU0 MICRO UNAVAIL",
-        s_vu0MicroPassed?155:255,s_vu0MicroPassed?243:139,176);
+        microReady?"VU0 MICRO READY":"VU0 MICRO UNAVAIL",
+        microReady?155:255,microReady?243:139,176);
     // Display previous frame's measured utilization, NOT PCSX2 FPS
     // capped to 60 by VSync. Includes physics, GS packet build and
     // DMA/GS FINISH, excludes deliberate VSync idle time.

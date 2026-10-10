@@ -254,7 +254,68 @@ int b3Vu0MicroDifferentialTest(void)
         s_status="VU0 FAIL DIFF";
         return 0;
     }
-    printf("BOX3D_VU0_PASS,backend=micro,contacts=64,outputs=320,worst=%f\n",
+    // The verified 16-group path does not establish correctness of the
+    // 1-group live VCALLMS. In particular, an immediate IADDIU -> IBNE
+    // counter dependency can accidentally execute a second record.
+    // Verify the actual live group count without adding a pad stage.
+    for(unsigned lane=0;lane<4u;++lane)
+    {
+        b3Vu0MicroRecord* r=&s_microData.record[0];
+        r->oldImpulse[lane]=0.5f+0.25f*(float)lane;
+        r->normalMass[lane]=0.125f+0.125f*(float)lane;
+        r->normalSpeed[lane]=-1.0f+0.25f*(float)lane;
+        r->velocityBias[lane]=0.125f;
+        r->oldPointTotal[lane]=0.25f;
+        r->oldManifoldTotal[lane]=0.5f;
+        r->oldTwistLimit[lane]=0.75f;
+        r->leverArm[lane]=0.5f;
+        // Stale 16-group results must not be mistaken for a new run.
+        r->newImpulse[lane]=0.0f;
+        r->deltaImpulse[lane]=0.0f;
+        r->newPointTotal[lane]=0.0f;
+        r->newManifoldTotal[lane]=0.0f;
+        r->newTwistLimit[lane]=0.0f;
+    }
+    memcpy(&expected,&s_microData,sizeof(expected));
+    b3Vu0MicroReference(&expected);
+
+    // QW[1+13+8] is the first output of the *next* record.
+    // b3Vu0MicroRunBlock(groups=1) uploads only QW[0..13].
+    // An off-by-one VU loop must not overwrite this sentinel.
+    volatile uint32_t* vu=B3_VU0_DATA_BASE;
+    const size_t guardWord=4u+B3_VU0_MICRO_RECORD_QWS*4u+8u*4u;
+    const uint32_t sentinel=0x48234567u;
+    vu[guardWord]=sentinel;
+    __asm__ __volatile__("sync.l" ::: "memory");
+    if(!b3Vu0MicroRunBlock(&s_microData,1u))
+    {
+        s_verified=0;
+        s_status="VU0 FAIL LIVE GROUP";
+        puts("BOX3D_VU0_FAIL,one_group_execute");
+        return 0;
+    }
+    for(unsigned k=0;k<20u;++k)
+    {
+        float got=((const float*)&s_microData.record[0].newImpulse)[k];
+        float want=((const float*)&expected.record[0].newImpulse)[k];
+        if(!isfinite(got) || fabsf(got-want)>0.0001f)
+        {
+            printf("BOX3D_VU0_FAIL,one_group_diff,field=%u,expected=%f,got=%f\n",
+                   k,(double)want,(double)got);
+            s_verified=0;
+            s_status="VU0 FAIL LIVE GROUP";
+            return 0;
+        }
+    }
+    if(vu[guardWord]!=sentinel)
+    {
+        printf("BOX3D_VU0_FAIL,one_group_overrun,guard=%08x\n",
+               (unsigned)vu[guardWord]);
+        s_verified=0;
+        s_status="VU0 FAIL GROUP OVERRUN";
+        return 0;
+    }
+    printf("BOX3D_VU0_PASS,backend=micro,contacts=64,outputs=320,one_group=ok,worst=%f\n",
            (double)worst);
     s_status="VU0 MICRO DIFF OK";
     return 1;

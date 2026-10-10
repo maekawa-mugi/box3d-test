@@ -1093,3 +1093,25 @@ checks the macro/micro dispatch predicate and the existing VU0 ABI.
 PCSX2 graphics recovery, 400-awake 60 FPS and real micro throughput
 are **not verified** by host tests. Full 64-lane batched live physics
 remains future work.
+
+## VU0 one-group VCALLMS correctness guard
+
+The startup 64-lane DIFF executes 16 groups, but a live Box3D
+contact uses one group. The VU0 micro loop previously decremented
+VI04 immediately before its IBNE, without integer result/use spacing.
+This could let the branch see an old count and execute a record after
+the requested last record. Four integer-pipeline spacing NOPs now
+separate the counter update from the loop branch.
+
+The existing automatic differential check now also exercises **one**
+group with different arithmetic inputs, checks all 20 output floats,
+and checks that a sentinel in the next group's output is untouched.
+It remains a single startup self-check, not another controller stage.
+If one-group execution fails or damages the guard, the VU0 backend
+is unavailable and TRIANGLE cannot activate it; normal EE and VU1
+rendering continue. The HUD also checks the current micro-ready
+flag so a live micro failure is no longer labeled READY.
+
+The exact PCSX2 symptom (shadows remain while BOX 400 vanishes after
+TRIANGLE) still requires a new-ELF runtime retest. The host tests
+cannot validate VU0 integer timing, GIF PATH1 completion or 60 FPS.
