@@ -1349,7 +1349,7 @@ static void render_official_hud(void)
     // visible in the EE-only first diagnostic stage, even if a later
     // VIF1 stage deadlocks before the next Present().
     b3GsOverlayPanel(374,14,252,132);
-    b3GsOverlayText(390,26,"TRIANGLE VU1R5",255,233,116);
+    b3GsOverlayText(390,26,"TRIANGLE VU1R6",255,233,116);
     char padInfo[40];
     snprintf(padInfo,sizeof(padInfo),"PRESS %u",
              s_trianglePressCount);
@@ -1684,6 +1684,7 @@ int main(void)
     // until the user enters the explicit INIT diagnostic stage.
     s_vu1Ready=0;
     puts("BOX3D_VU1_STARTUP,lazy=1,ready=0,ee_safe=1");
+    puts("BOX3D_VU1_BUILD,revision=vu1r6_normal_dma_path1");
     puts("BOX3D_VU1_SAFE_DEFAULT,ee_geometry=1,triangle=ack_path3_init_arm_init_verify_arm_verify_vif_boot");
 #endif
 #if defined(BOX3D_PS2_PAD_NAV)
