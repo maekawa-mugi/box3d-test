@@ -1115,3 +1115,27 @@ flag so a live micro failure is no longer labeled READY.
 The exact PCSX2 symptom (shadows remain while BOX 400 vanishes after
 TRIANGLE) still requires a new-ELF runtime retest. The host tests
 cannot validate VU0 integer timing, GIF PATH1 completion or 60 FPS.
+
+## VU0 final-group termination and live fault-safe rendering
+
+The one-group guard exposed that a successful 16-group DIFF is not
+proof that the final loop iteration terminates correctly when
+the live contact solver requests one record. The VU0 microprogram
+now compares the long-stable group counter to one **before**
+decrementing. A one-group VCALLMS branches directly to the
+E-bit exit without examining the just-updated counter or loading
+the next record. Existing 16-group DIFF and one-group/sentinel
+startup checks still gate live mode 6.
+
+The HUD displays the current VU0 failure reason instead of only
+"VU0 MICRO UNAVAIL". If a live VU0 hardware or numerical
+failure disables mode 6 during a physics step, subsequent
+geometry uses the original EE GS path rather than relying on
+possibly affected VU1/GIF PATH1 output. A normal per-step micro
+budget fallback does not disable VU1 or change the solver mode.
+No additional pad-controlled diagnostic stages were added.
+
+This is a conservative rendering recovery path, **not** proof of
+a GIF synchronization root cause or 60 FPS. PCSX2 validation is
+still required to distinguish startup DIFF failure from a
+live contact failure and to verify the boxes remain visible.

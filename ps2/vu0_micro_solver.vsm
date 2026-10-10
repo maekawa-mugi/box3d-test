@@ -16,6 +16,10 @@ B3Vu0Contacts_CodeStart:
         ; Group count is held in VU0 DMEM[0].x, 1..16.
         ; The original 16-group differential path uses the same code.
         NOP                                ilw.x VI04,0(VI00)
+        ; Keep the last-group sentinel in a separate stable VI register.
+        ; The live 1-group path can then exit without reading a freshly
+        ; decremented loop counter (and without touching a second record).
+        NOP                                iaddiu VI03,VI00,1
 vu0_contact_loop:
         NOP                                lq VF01,0(VI01)
         NOP                                lq VF02,1(VI01)
@@ -63,6 +67,10 @@ vu0_contact_loop:
         NOP                                sq VF14,11(VI01)
         NOP                                sq VF15,12(VI01)
         NOP                                iaddiu VI01,VI01,13
+        ; Test the *stable* current count before decrementing. In
+        ; particular a 1-group VCALLMS must never enter record #2.
+        NOP                                ibeq VI04,VI03,vu0_contact_done
+        NOP                                NOP
         NOP                                iaddiu VI04,VI04,-1
         ; The integer counter must reach VI04 before IBNE samples it.
         ; With no gap the last iteration can branch using the previous
@@ -73,6 +81,7 @@ vu0_contact_loop:
         NOP                                NOP
         NOP                                ibne VI04,VI00,vu0_contact_loop
         NOP                                NOP
+vu0_contact_done:
         NOP[E]                             NOP
         NOP                                NOP
         .align 4

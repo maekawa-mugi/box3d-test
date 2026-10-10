@@ -1373,8 +1373,10 @@ static void render_official_hud(void)
         b3Ps2GetVU0Enabled()==6?"TRIANGLE VU0 MIX":"TRIANGLE VU0 OFF",
         255,238,132);
     int microReady=s_vu0MicroPassed&&b3Vu0MicroIsReady();
+    // Display the specific hardware failure, not the same generic
+    // "UNAVAIL" for startup one-group rejection and a live fallback.
     b3GsOverlayText(390,110,
-        microReady?"VU0 MICRO READY":"VU0 MICRO UNAVAIL",
+        microReady?"VU0 MICRO READY":b3Vu0MicroStatus(),
         microReady?155:255,microReady?243:139,176);
     // Display previous frame's measured utilization, NOT PCSX2 FPS
     // capped to 60 by VSync. Includes physics, GS packet build and
@@ -1689,9 +1691,22 @@ int main(void)
         b3World_Step(s_scene.world,1.0f/60.0f,s_simSubsteps);
         if(s_vu0Mode!=b3Ps2GetVU0Enabled())
         {
+            // A live VU0 fault occurred during the completed physics
+            // step. Keep the demo drawable even if the failed VU0
+            // launch has disturbed the subsequent VU1/PATH1 render.
+            // Only hardware failure, not the normal per-step call
+            // budget, triggers this persistent EE geometry fallback.
+            int wasLiveMicro=s_vu0Mode==6;
             s_vu0Mode=b3Ps2GetVU0Enabled();
             printf("BOX3D_VU0_LIVE_FALLBACK,mode=%d,status=%s\n",
                    s_vu0Mode,b3Vu0MicroStatus());
+            if(wasLiveMicro && s_vu0Mode==0 &&
+               !b3Vu0MicroIsReady() && s_vu1Ready)
+            {
+                s_vu1Ready=0;
+                s_vu1Budget=0;
+                puts("BOX3D_VU1_DISABLED,vu0_live_fault,ee_geometry_fallback=1");
+            }
         }
 #else
         b3World_Step(s_scene.world,1.0f/60.0f,4);
