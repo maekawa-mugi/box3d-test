@@ -310,7 +310,6 @@ static void b3GsTriangle3Raw(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
     b3GsAD(GS_SET_PRIM(3, 0, 0, 0, s_shadowPass ? 1 : 0, 0, 0, 0, 0), GS_REG_PRIM);
     b3GsAD(GS_SET_RGBAQ(r,g,blue,s_shadowPass ? 0x50 : 0x80,0x3f800000),GS_REG_RGBAQ);
 #endif
-#endif
 #else
     b3GsAD(GS_SET_PRIM(3, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
     b3GsAD(GS_SET_RGBAQ(r,g,blue,0x80,0x3f800000),GS_REG_RGBAQ);
