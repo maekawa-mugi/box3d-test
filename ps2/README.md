@@ -326,3 +326,27 @@ cc -std=c17 -Wall -Wextra -Werror -ffp-contract=off \
   src/ps2_vu0.c ps2/vu0_normal_test.c -lm -o /tmp/b3_vu0_normal
 /tmp/b3_vu0_normal
 ```
+
+## VU0 compute roofline probe (not an end-to-end optimization)
+
+The PCSX2 mode4-vs-mode5 screenshot (2026-10-10) shows that moving the
+normal impulse and its accumulators into a single 208-byte VU0 macro
+kernel was a **regression**: mode4 ~1,554,726 and mode5 ~1,561,309
+CP0 cycles/step, **0.996x**. Correctness PASS. Do not select mode5
+for throughput; mode4 remains the reference.
+
+The diagnostic `BOX3D_VU0_ALU_PROBE` now runs 8 *independent* VF
+accumulators in a 64-iteration VU0 macro-mode loop, with a single
+aligned operand vector kept resident in VF registers: 512 four-lane
+vector additions (2048 float32 additions) per sample. It measures
+and logs the **sustained compute-only** effective vector-add issue
+rate, verifying every result exactly with binary-fraction inputs.
+
+`nominal_gflops` multiplies observed operations per CP0 tick by
+a nominal 294.912 MHz and is a *PCSX2 diagnostic*, not PS2 silicon
+throughput or a prediction of Box3D's speed. Neither the setup nor
+the argument-reset work is part of the timed kernel; the internal
+loop and initial/final COP2 transfers *are*. A vector-add-only
+probe is not the same as peak VU0 fused multiply-add throughput.
+The point is to isolate pipeline utilization from the costly
+per-constraint `LQC2/SQC2` and control-path work in Box3D.

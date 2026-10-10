@@ -309,3 +309,62 @@ void b3Ps2VU0NormalSolve( b3Ps2VU0NormalSolveData* data )
     }
 #endif
 }
+
+_Static_assert( offsetof(b3Ps2VU0ALUProbeData, add) == 128, "VU0 probe input offset" );
+_Static_assert( sizeof(b3Ps2VU0ALUProbeData) == 144, "VU0 probe input size" );
+_Static_assert( _Alignof(b3Ps2VU0ALUProbeData) >= 16, "VU0 probe scratch alignment" );
+
+// Hold eight VF accumulators and the add operand resident for 64 rounds.
+// This measures the arithmetic issue rate in the absence of repeated
+// intermediate store/reload traffic. It is not the Box3D solver.
+void b3Ps2VU0ALUProbe( b3Ps2VU0ALUProbeData* data )
+{
+#if defined(BOX3D_PS2) && (defined(__mips__) || defined(__mips))
+    __asm__ __volatile__(
+        ".set push\n\t"
+        ".set noreorder\n\t"
+        "lqc2 $vf10, 0(%0)\n\t"
+        "lqc2 $vf11, 16(%0)\n\t"
+        "lqc2 $vf12, 32(%0)\n\t"
+        "lqc2 $vf13, 48(%0)\n\t"
+        "lqc2 $vf14, 64(%0)\n\t"
+        "lqc2 $vf15, 80(%0)\n\t"
+        "lqc2 $vf16, 96(%0)\n\t"
+        "lqc2 $vf17, 112(%0)\n\t"
+        "lqc2 $vf1, 128(%0)\n\t"
+        "addiu $8, $0, 64\n\t"
+        "1:\n\t"
+        "vadd.xyzw $vf10, $vf10, $vf1\n\t"
+        "vadd.xyzw $vf11, $vf11, $vf1\n\t"
+        "vadd.xyzw $vf12, $vf12, $vf1\n\t"
+        "vadd.xyzw $vf13, $vf13, $vf1\n\t"
+        "vadd.xyzw $vf14, $vf14, $vf1\n\t"
+        "vadd.xyzw $vf15, $vf15, $vf1\n\t"
+        "vadd.xyzw $vf16, $vf16, $vf1\n\t"
+        "vadd.xyzw $vf17, $vf17, $vf1\n\t"
+        "addiu $8, $8, -1\n\t"
+        "bnez $8, 1b\n\t"
+        "nop\n\t"
+        "sqc2 $vf10, 0(%0)\n\t"
+        "sqc2 $vf11, 16(%0)\n\t"
+        "sqc2 $vf12, 32(%0)\n\t"
+        "sqc2 $vf13, 48(%0)\n\t"
+        "sqc2 $vf14, 64(%0)\n\t"
+        "sqc2 $vf15, 80(%0)\n\t"
+        "sqc2 $vf16, 96(%0)\n\t"
+        "sqc2 $vf17, 112(%0)"
+        "\n\t.set pop"
+        : : "r"(data) : "$8", "memory" );
+#else
+    for (int round = 0; round < B3_PS2_VU0_PROBE_ROUNDS; ++round)
+    {
+        for (int group = 0; group < B3_PS2_VU0_PROBE_STREAMS; ++group)
+        {
+            for (int lane = 0; lane < 4; ++lane)
+            {
+                data->sum[group][lane] += data->add[lane];
+            }
+        }
+    }
+#endif
+}

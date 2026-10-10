@@ -91,3 +91,18 @@ typedef struct b3Ps2VU0NormalSolveData
 
 void b3Ps2VU0NormalSolve( b3Ps2VU0NormalSolveData* data );
 unsigned b3Ps2GetVU0NormalSolveCount( void );
+
+// Compute-only saturation probe: 8 independent VF accumulators, each with
+// four float32 lanes, stay in COP2 for 64 iterations of vector addition.
+// The 17 memory transfers are amortized over 512 vector instructions.
+// This is a diagnostic roofline *experiment*, not an optimized solver path.
+#define B3_PS2_VU0_PROBE_ROUNDS 64
+#define B3_PS2_VU0_PROBE_STREAMS 8
+
+typedef struct b3Ps2VU0ALUProbeData
+{
+    _Alignas(16) float sum[B3_PS2_VU0_PROBE_STREAMS][4];
+    float add[4];
+} b3Ps2VU0ALUProbeData;
+
+void b3Ps2VU0ALUProbe( b3Ps2VU0ALUProbeData* data );

@@ -581,6 +581,64 @@ static void vu0_shared_kernel_check( void )
 }
 
 
+
+// Fixed-work arithmetic-throughput probe: keep eight float4 values in VF
+// registers across 512 vector adds. Timed region excludes input resets.
+// 8 * 64 vector adds * 4 lanes = 2048 floating additions per sample.
+static void vu0_arithmetic_probe( void )
+{
+    b3Ps2VU0ALUProbeData data;
+    const int samples = 64;
+    uint64_t totalTicks = 0;
+    for ( int lane = 0; lane < 4; ++lane )
+    {
+        data.add[lane] = (float)(1 << lane) * 0.125f;
+    }
+    // One warm-up invocation before timing.
+    memset( data.sum, 0, sizeof(data.sum) );
+    b3Ps2VU0ALUProbe( &data );
+
+    for ( int trial = 0; trial < samples; ++trial )
+    {
+        memset( data.sum, 0, sizeof(data.sum) );
+        uint32_t start = b3Ps2ReadCpuCycles();
+        b3Ps2VU0ALUProbe( &data );
+        uint32_t elapsed = b3Ps2DeltaCpuCycles( start, b3Ps2ReadCpuCycles() );
+        if ( elapsed >= UINT32_C(0x80000000) ) screen_stop( "VU0 ALU probe Count overflow" );
+        totalTicks += elapsed;
+        for ( int group = 0; group < B3_PS2_VU0_PROBE_STREAMS; ++group )
+        {
+            for ( int lane = 0; lane < 4; ++lane )
+            {
+                // All are exactly representable binary fractions.
+                float expected = data.add[lane] * (float)B3_PS2_VU0_PROBE_ROUNDS;
+                if ( !isfinite(data.sum[group][lane]) ||
+                     fabsf(data.sum[group][lane] - expected) > 0.0001f )
+                {
+                    screen_stop( "VU0 ALU probe arithmetic mismatch" );
+                }
+            }
+        }
+    }
+
+    const uint64_t vectorAdds = (uint64_t)samples *
+        B3_PS2_VU0_PROBE_ROUNDS * B3_PS2_VU0_PROBE_STREAMS;
+    const double instructionsPerCycle = totalTicks > 0 ?
+        (double)vectorAdds / (double)totalTicks : 0.0;
+    const double floatAddsPerCycle = 4.0 * instructionsPerCycle;
+    // GHz = 0.294912: arithmetic-only *nominal* VU0 throughput.
+    const double nominalGflops = floatAddsPerCycle * 0.294912;
+    char line[160];
+    snprintf( line, sizeof(line),
+              "VU0 ALU: %.3f vec-add/cyc, %.3f nominal GFLOPS",
+              instructionsPerCycle, nominalGflops );
+    screen_line( line );
+    printf( "BOX3D_VU0_ALU_PROBE,PASS,samples=%d,vector_adds=%llu,ticks=%llu,vec_add_per_cycle=%.6f,float_add_per_cycle=%.6f,nominal_gflops=%.6f\n",
+            samples, (unsigned long long)vectorAdds,
+            (unsigned long long)totalTicks,
+            instructionsPerCycle, floatAddsPerCycle, nominalGflops );
+}
+
 static void vu0_normal_kernel_check( void )
 {
     b3Ps2VU0NormalSolveData d;
@@ -766,10 +824,12 @@ int main( void )
     screen_line( vu0Line );
     vu0_shared_kernel_check();
     vu0_normal_kernel_check();
+    vu0_arithmetic_probe();
     // Keep the useful final A/B scene rows on screen regardless of how
     // many earlier correctness/microbenchmark lines were printed.
     scr_clear();
     screen_line( "VU0 physics A/B: COP1, pair, extended, shared" );
+    screen_line( "ALU probe is in stdout (see BOX3D_VU0_ALU_PROBE)" );
     vu0_scene_benchmark( "single eight-box", 2, 2, 0, 1 );
     vu0_scene_benchmark( "single 32-box", 4, 2, 0, 1 );
     vu0_scene_benchmark( "paired eight-box", 2, 2, 0, 2 );

@@ -32,5 +32,12 @@ int main(void)
         assert(fabsf(d.newManifoldTotal[k]-(next+3.0f))<0.000001f);
         assert(fabsf(d.newTwistLimit[k]-(4.0f+0.5f*next))<0.000001f);
     }
+    b3Ps2VU0ALUProbeData alu = {0};
+    for (int lane=0; lane<4; ++lane) alu.add[lane]=(float)(1<<lane)*0.125f;
+    b3Ps2VU0ALUProbe(&alu);
+    for (int stream=0; stream<B3_PS2_VU0_PROBE_STREAMS; ++stream)
+    for (int lane=0; lane<4; ++lane)
+        assert(fabsf(alu.sum[stream][lane] -
+                     alu.add[lane]*B3_PS2_VU0_PROBE_ROUNDS)<0.000001f);
     return 0;
 }
