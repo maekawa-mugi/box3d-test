@@ -3,6 +3,8 @@
 // Reports raw Count ticks; does not interpret PCSX2 speed as console silicon.
 #include "box3d/box3d.h"
 #include "../src/ps2_mmi.h"
+#include "../src/ps2_vu0.h"
+#include "../src/simd.h"
 #include "ee_clock.h"
 
 #include <debug.h>
@@ -129,7 +131,7 @@ static uint64_t micro_sample( int mode, int useOr )
     return elapsed;
 }
 
-static BenchResult run_physics( int mode, int side, int layers )
+static BenchResult run_physics( int mode, int vu0Mode, int side, int layers )
 {
     BenchResult result = { 0 };
     const int bodies = side * side * layers;
@@ -137,6 +139,7 @@ static BenchResult run_physics( int mode, int side, int layers )
     if ( bodies > BENCH_MAX_BODIES ) screen_stop( "too many bodies" );
 
     b3Ps2SetMMIEnabled( mode );
+    b3Ps2SetVU0Enabled( vu0Mode );
     const int64_t beforeBytes = b3GetByteCount();
     const int beforeWorlds = b3GetWorldCount();
 
@@ -210,6 +213,7 @@ static BenchResult run_physics( int mode, int side, int layers )
     result.cleanupOk = beforeBytes == b3GetByteCount() && beforeWorlds == b3GetWorldCount();
     if ( !result.cleanupOk ) screen_stop( "world memory leak" );
     if ( result.slowSamples ) screen_stop( "step time >= 2^31 Count ticks" );
+    b3Ps2SetVU0Enabled( 0 );
     return result;
 }
 
@@ -222,7 +226,7 @@ static void scene_benchmark( const char* label, int side, int layers )
     for ( int repeat = 0; repeat < BENCH_REPEATS; ++repeat )
     {
         const int mode = modes[repeat];
-        runs[repeat] = run_physics( mode, side, layers );
+        runs[repeat] = run_physics( mode, 0, side, layers );
         uint64_t mean = runs[repeat].ticks / BENCH_STEPS;
         printf( "BOX3D_SCENE,%s,repeat=%d,mmi=%d,total_ticks=%llu,ticks_per_step=%llu,y=%.6f,pos_sum=%.6f,vel_sum=%.6f\n",
                 label, repeat, mode, (unsigned long long)runs[repeat].ticks,
@@ -253,6 +257,112 @@ static void scene_benchmark( const char* label, int side, int layers )
             label,(unsigned long long)scalarTicks,(unsigned long long)mmiTicks,ratio );
 }
 
+
+static void vu0_kernel_check( void )
+{
+    // Include positive, negative and varying magnitude finite normal inputs.
+    b3Ps2VU0Dot4Data d;
+    float worstError = 0.0f;
+    for ( int trial = 0; trial < 96; ++trial )
+    {
+        for ( int k = 0; k < 4; ++k )
+        {
+            const float a = 0.04f * (float)(1 + 7*trial + 11*k);
+            const float b = 0.03f * (float)(1 + 3*trial + 13*k);
+            d.ax[k] = a;
+            d.ay[k] = -0.5f * b;
+            d.az[k] = a * 0.75f;
+            d.bx[k] = -0.2f * b;
+            d.by[k] = -0.7f * a;
+            d.bz[k] = 0.3f * b;
+        }
+        b3Ps2VU0Dot4( &d );
+        for ( int k = 0; k < 4; ++k )
+        {
+            const float expected = ((d.ax[k] * d.bx[k]) +
+                                     (d.ay[k] * d.by[k])) +
+                                     (d.az[k] * d.bz[k]);
+            const float error = fabsf( expected - d.out[k] );
+            if ( error > worstError ) worstError = error;
+            if ( !isfinite(d.out[k]) || error > 0.0005f + 0.00005f*fabsf(expected) )
+            {
+                screen_stop( "VU0 dot4 differs from scalar" );
+            }
+        }
+    }
+    char display[128];
+    snprintf( display, sizeof(display), "VU0 dot4: 384 lanes verified (max err %.6f)", worstError );
+    screen_line( display );
+    printf( "BOX3D_VU0_KERNEL,PASS,max_error=%.7f\\n", worstError );
+}
+
+static uint64_t vu0_micro_sample( int enabled )
+{
+    const b3Vec3W4 a = {
+        b3SetW4(1.0f, 2.0f, 3.0f, 4.0f),
+        b3SetW4(2.5f, -3.5f, 4.5f, -5.5f),
+        b3SetW4(6.1f, 7.2f, -8.3f, 9.4f)
+    };
+    const b3Vec3W4 b = {
+        b3SetW4(3.1f, -2.1f, 1.1f, 4.2f),
+        b3SetW4(0.3f, 4.0f, 5.0f, -2.0f),
+        b3SetW4(-4.0f, 1.3f, 2.2f, 6.2f)
+    };
+    float checksum = 0.0f;
+    uint64_t ticks = 0;
+    b3Ps2SetVU0Enabled( enabled );
+    for ( int i = 0; i < 256; ++i )
+    {
+        uint32_t start = b3Ps2ReadCpuCycles();
+        b3FloatW4 r = b3DotW4( a, b );
+        uint32_t delta = b3Ps2DeltaCpuCycles( start, b3Ps2ReadCpuCycles() );
+        if ( delta >= UINT32_C(0x80000000) ) screen_stop( "VU0 micro timer invalid" );
+        ticks += delta;
+        checksum += r.x + r.y + r.z + r.w;
+    }
+    b3Ps2SetVU0Enabled( 0 );
+    printf( "BOX3D_VU0_MICRO,vu0=%d,total_ticks=%llu,avg_ticks=%llu,sum=%.6f\\n",
+            enabled,(unsigned long long)ticks,(unsigned long long)(ticks/256),checksum );
+    return ticks;
+}
+
+static void vu0_scene_benchmark( const char* label, int side, int layers )
+{
+    // Same ABBA experiment as MMI: VU0 disabled/enabled/enabled/disabled.
+    const int modes[4] = { 0, 1, 1, 0 };
+    BenchResult runs[4];
+    uint64_t baseline = 0, vu0 = 0;
+    for ( int i = 0; i < 4; ++i )
+    {
+        runs[i] = run_physics( 0, modes[i], side, layers );
+        printf( "BOX3D_VU0_SCENE,%s,repeat=%d,vu0=%d,ticks=%llu,y=%.7f,pos=%.7f,vel=%.7f\\n",
+                label,i,modes[i],(unsigned long long)runs[i].ticks,
+                runs[i].firstY,runs[i].positionSum,runs[i].velocitySum );
+        if ( modes[i] ) vu0 += runs[i].ticks;
+        else baseline += runs[i].ticks;
+    }
+    // VU is a different FPU with different rounding and no NaNs. Compare
+    // on finite test states with a tolerance; do not demand bit-identical
+    // broadphase/contact trajectories after 120 timesteps.
+    for ( int i = 1; i < 4; ++i )
+    {
+        if ( fabsf( runs[i].firstY - runs[0].firstY ) > 0.02f ||
+             fabsf( runs[i].positionSum - runs[0].positionSum ) > 0.10f ||
+             fabsf( runs[i].velocitySum - runs[0].velocitySum ) > 0.10f )
+        {
+            screen_stop( "VU0 changed physics beyond tolerance" );
+        }
+    }
+    const double ratio = vu0 ? (double)baseline/(double)vu0 : 0.0;
+    char display[160];
+    snprintf( display, sizeof(display), "%s: scalar %llu / VU0 %llu cyc/step (x%.3f)",
+              label,(unsigned long long)(baseline/(2*BENCH_STEPS)),
+              (unsigned long long)(vu0/(2*BENCH_STEPS)),ratio );
+    screen_line( display );
+    printf( "BOX3D_VU0_SUMMARY,%s,scalar_ticks=%llu,vu0_ticks=%llu,ratio=%.5f,correct=1\\n",
+            label,(unsigned long long)baseline,(unsigned long long)vu0,ratio );
+}
+
 int main( void )
 {
     setvbuf( stdout, NULL, _IONBF, 0 );
@@ -280,8 +390,20 @@ int main( void )
     scene_benchmark( "eight-box", 2, 2 );
     scene_benchmark( "32-box", 4, 2 );
     b3Ps2SetMMIEnabled( 0 );
+
+    vu0_kernel_check();
+    uint64_t vu0ScalarTicks = vu0_micro_sample( 0 );
+    uint64_t vu0VectorTicks = vu0_micro_sample( 1 );
+    char vu0Line[128];
+    snprintf( vu0Line, sizeof(vu0Line), "VU0 dot4 avg: COP1 %llu / VU0 %llu ticks",
+              (unsigned long long)(vu0ScalarTicks/256),
+              (unsigned long long)(vu0VectorTicks/256) );
+    screen_line( vu0Line );
+    vu0_scene_benchmark( "VU0 eight-box", 2, 2 );
+    vu0_scene_benchmark( "VU0 32-box", 4, 2 );
     scr_setfontcolor( 0x77ff77u );
-    screen_line( "PASS: MMI bitsets match, physics snapshots match" );
+    screen_line( "PASS: MMI + VU0 math and physics within tolerance" );
+    puts( "BOX3D_VU0_BENCH_PASS" );
     puts( "BOX3D_BENCH_PASS" );
     screen_line( "Result held; reset PS2 to exit." );
     for ( ;; ) SleepThread();

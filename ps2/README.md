@@ -1,8 +1,9 @@
 # Experimental PlayStation 2 EE port
 
 This branch implements a **single-EE-worker scalar baseline** and an
-optional **R5900 integer MMI bitset backend**. VU0 acceleration is not
-implemented. The physics float solver remains scalar. It uses PS2SDK/newlib `memalign` for
+optional **R5900 integer MMI bitset backend** and **VU0 COP2 macro-mode
+four-lane floating-point dot products** in the wide contact solver. Other
+physics math remains scalar. It uses PS2SDK/newlib `memalign` for
 32-byte allocations and simple operations in place of unsupported 64-bit atomics.
 
 **Not thread-safe:** pseudo-atomics, mutexes, and semaphores on EE do not
@@ -103,6 +104,33 @@ A span of 2^31 Count ticks (~7.28 s nominal) or longer per step is
 rejected, because its wrap cannot be distinguished reliably. No claim
 of actual-hardware validation is made.
 
+## VU0 macro-mode numerical A/B benchmark
+
+The same `ps2/box3d_ps2_bench.elf` now also runs a VU0 test after the
+original MMI tests. VU0 is the EE's 4-wide floating-point COP2 vector unit
+and is distinct from integer MMI and VU1 micro mode.
+
+- The VU0 kernel implements `b3DotW4` with `LQC2`, separate `VMUL.xyzw`,
+  `VADD.xyzw` and `SQC2`. Each input/output is copied to **guaranteed
+  16-byte-aligned** 112-byte scratch to avoid the EE LQC2/SQC2 alignment
+  exception. The scratch packing and function-call overhead are included in
+  the runtime comparison.
+- The test compares 384 finite vector lanes with the scalar dot operation,
+  checks an absolute plus relative tolerance and logs maximum error.
+  The PS2 VU FPU can differ from EE COP1 by last bits and does not support
+  NaNs/infinities/subnormals; invalid input is out of scope.
+- ABBA physics samples with 8 and 32 boxes compare VU0-on vs scalar
+  at 120 steps, without MMI interference. It checks position and velocity
+  aggregates, first-box height, and cleanup. Outputs include
+  `BOX3D_VU0_KERNEL`, `BOX3D_VU0_MICRO`, `BOX3D_VU0_SCENE`,
+  `BOX3D_VU0_SUMMARY`, `BOX3D_VU0_BENCH_PASS`.
+- **VU0 is opt-in** and disabled by default. Do not switch within a world
+  step, use multiple EE workers, or use another VU0 microprogram concurrently.
+  This initial per-call transfer implementation may well be *slower*;
+  measure before committing to deeper contact-solver VU0 work.
+- VU0 correctness and timing remain **unverified on PCSX2** until the
+  new ELF is built and run by the tester. PS2 hardware timing is separate.
+
 ## EE-specific limitations (see attached EE Core user manual)
 
 - **FPU:** COP1 supports only single precision, does not support IEEE-style
@@ -116,8 +144,9 @@ of actual-hardware validation is made.
   calibration.
 - **Scheduler:** sleep/yield and EE worker creation are unsupported.
 - **Memory:** profile peak allocations and frame times on the real EE.
-- **Acceleration:** only aligned integer bitset zero/OR uses MMI so far.
-  Profile solver/narrowphase separately before tackling VU0 macro mode.
+- **Acceleration:** aligned integer bitset zero/OR uses MMI; wide4
+  contact dot products can optionally run on VU0 macro mode. Whole-solver
+  VU0 vectorization and VU1 micro programs are not implemented.
 
 The supplied hardware manual is a reference, not redistributed in the repo.
 

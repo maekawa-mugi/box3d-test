@@ -9,6 +9,10 @@
 
 #include <stdbool.h>
 
+#if defined( BOX3D_PS2 )
+#include "ps2_vu0.h"
+#endif
+
 #if defined( B3_SIMD_ENABLED )
 
 #if defined( B3_SIMD_NEON )
@@ -273,6 +277,23 @@ static inline b3Vec3W4 b3AddVW4( b3Vec3W4 a, b3Vec3W4 b )
 
 static inline b3FloatW4 b3DotW4( b3Vec3W4 a, b3Vec3W4 b )
 {
+#if defined( BOX3D_PS2 )
+	if ( b3Ps2GetVU0Enabled() )
+	{
+		// Pack six SOA float4 vectors into aligned scratch for safe LQC2.
+		// The transfer overhead is intentionally included in whole-engine
+		// measurements. A faster in-place VF design is future work.
+		b3Ps2VU0Dot4Data s;
+		b3StoreW4( s.ax, a.X );
+		b3StoreW4( s.bx, b.X );
+		b3StoreW4( s.ay, a.Y );
+		b3StoreW4( s.by, b.Y );
+		b3StoreW4( s.az, a.Z );
+		b3StoreW4( s.bz, b.Z );
+		b3Ps2VU0Dot4( &s );
+		return b3LoadW4( s.out );
+	}
+#endif
 	return b3AddW4( b3AddW4( b3MulW4( a.X, b.X ), b3MulW4( a.Y, b.Y ) ), b3MulW4( a.Z, b.Z ) );
 }
 

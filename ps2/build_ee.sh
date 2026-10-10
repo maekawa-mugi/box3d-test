@@ -89,7 +89,7 @@ BENCH_OUT=${BENCH_OUT:-$ROOT/ps2/box3d_ps2_bench.elf}
     die "Benchmark is not a MIPS ELF"
 "$READELF" -h "$BENCH_OUT" | grep -q 'Type:.*EXEC' ||
     die "Benchmark is not an executable ELF"
-for symbol in main b3World_Step b3Ps2ClearBytes b3Ps2OrWords b3Ps2SetMMIEnabled; do
+for symbol in main b3World_Step b3Ps2ClearBytes b3Ps2OrWords b3Ps2SetMMIEnabled b3Ps2VU0Dot4 b3Ps2SetVU0Enabled; do
     "$NM" --defined-only "$BENCH_OUT" | grep -Eq " [Tt] ${symbol}$" ||
         die "Benchmark missing linked symbol: $symbol"
 done
