@@ -61,6 +61,8 @@ set(BOX3D_SOURCE_FILES
 	platform.h
 	platform_ps2.h
 	ps2_count.h
+	ps2_mmi.c
+	ps2_mmi.h
 	prismatic_joint.c
 	qsort.h
 	rapidhash.h

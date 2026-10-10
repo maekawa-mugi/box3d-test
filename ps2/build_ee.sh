@@ -78,6 +78,23 @@ LIB="$BUILD/src/libbox3d.a"
 "$NM" --defined-only "$OUT" | grep -Eq ' [Tt] main$' ||
     die "PS2 smoke main() missing from linked ELF"
 
+# Build separate physics + MMI correctness/timing ELF. Smoke stays standalone.
+BENCH_OUT=${BENCH_OUT:-$ROOT/ps2/box3d_ps2_bench.elf}
+"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
+    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
+    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
+    "$ROOT/ps2/bench.c" "$LIB" \
+    -L"$PS2SDK/ee/lib" -lm -ldebug -lkernel -o "$BENCH_OUT"
+"$READELF" -h "$BENCH_OUT" | grep -q 'Machine:.*MIPS' ||
+    die "Benchmark is not a MIPS ELF"
+"$READELF" -h "$BENCH_OUT" | grep -q 'Type:.*EXEC' ||
+    die "Benchmark is not an executable ELF"
+for symbol in main b3World_Step b3Ps2ClearBytes b3Ps2OrWords b3Ps2SetMMIEnabled; do
+    "$NM" --defined-only "$BENCH_OUT" | grep -Eq " [Tt] ${symbol}$" ||
+        die "Benchmark missing linked symbol: $symbol"
+done
+
 printf 'PS2 BUILD OK: %s\n' "$OUT"
+printf 'PS2 BENCH BUILD OK: %s\n' "$BENCH_OUT"
 printf 'Target: %s\n' "$("$CC" -dumpmachine)"
 printf 'Run this ELF in PCSX2 or on PS2 and record BOX3D_STAGE / PASS / FAIL.\n'

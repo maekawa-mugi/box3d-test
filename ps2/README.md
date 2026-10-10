@@ -1,7 +1,8 @@
 # Experimental PlayStation 2 EE port
 
-This branch implements a **single-EE-worker scalar baseline**. MMI and VU0
-acceleration are **not implemented**. It uses PS2SDK/newlib `memalign` for
+This branch implements a **single-EE-worker scalar baseline** and an
+optional **R5900 integer MMI bitset backend**. VU0 acceleration is not
+implemented. The physics float solver remains scalar. It uses PS2SDK/newlib `memalign` for
 32-byte allocations and simple operations in place of unsupported 64-bit atomics.
 
 **Not thread-safe:** pseudo-atomics, mutexes, and semaphores on EE do not
@@ -17,7 +18,7 @@ PS2SDK debug screen and terminal-output strategy as
 
 ```sh
 sh ps2/build_ee.sh
-# Expected: ps2/box3d_ps2_smoke.elf
+# Expected: ps2/box3d_ps2_smoke.elf and ps2/box3d_ps2_bench.elf
 ```
 
 The shell build validates that the result is a MIPS executable with both the
@@ -51,10 +52,11 @@ Run the ELF with a preferred emulator or loader. The smoke program checks
 gravity after 15 steps, ground contact at 180, contact stability at 300 and
 that world/memory accounting returns to the initial state on teardown.
 
-**PS2 cross-compilation, ELF linking and emulator/hardware execution are
-not yet verified in this development environment because the toolchain is not
-installed.** The PS2SDK sample Makefile rules may require adjustment
-for the installed PS2SDK release.
+**Scalar smoke has been cross-compiled and executed successfully on PCSX2 by
+the tester.** The new MMI backend and benchmark have not yet been cross-built
+or run here because this development environment does not have PS2DEV/PS2SDK.
+The PS2SDK sample Makefile rules may require adjustment for the installed
+PS2SDK release.
 
 ## 4. Run scalar regressions on the host
 
@@ -68,7 +70,38 @@ cmake --build build/ps2-host-smoke --target box3d_ps2_smoke box3d_ps2_count_wrap
 ./build/ps2-host-smoke/bin/box3d_ps2_count_wrap
 ```
 
-Host CI runs these checks in Debug and Release, including on draft PRs.
+The established scalar correctness run passed in PCSX2 (2026-10-10).
+Host regression commands are optional; CI is not a release gate.
+
+## MMI verification and PS2 timing benchmark
+
+The new `ps2/box3d_ps2_bench.elf` runs two modes **within one binary**:
+scalar/newlib bitset clear/OR versus R5900 128-bit integer MMI `SQ` and
+`LQ/POR/SQ`. All Box3D float math remains the established scalar path.
+
+1. On startup, test every byte of the zero and OR buffers for sizes from
+   0 through 64 64-bit words, with aligned and offset-by-8-byte inputs.
+   Both modes must agree exactly, including tails and guard elements.
+2. Measure raw 2 KiB clear and OR times using read-only CP0 Count; report
+   `BOX3D_MICRO` CSV-like records to stdout.
+3. Run 120 physics steps for 8 and 32 dynamic boxes, across **ABBA**
+   scalar/MMI trials with one EE worker and sleep disabled. Report each
+   `BOX3D_SCENE` and aggregate `BOX3D_SCENE_SUMMARY` cycles per step,
+   plus numerical equality within 0.001 for position and velocity
+   checksums and first-body Y; stop with a persistent red screen if not.
+4. Success emits `BOX3D_BENCH_PASS`. The program keeps the GS result
+   visible instead of exiting into the loader.
+
+**Important:** MMI performs integer operations only here. It does not
+vectorize the floating-point contact solver. `b3InPlaceUnion` is mostly
+unused on the single-worker PS2 runtime; the relevant physics hook is
+`b3SetBitCountAndClear` in contact processing. The 2 KiB microbenchmark
+is the direct measure of OR speed, not a promise of whole-engine gain.
+An `x1.0` or worse physics result is a valid outcome. PCSX2 cycle counts
+and timings should not be treated as hardware EE performance results.
+A span of 2^31 Count ticks (~7.28 s nominal) or longer per step is
+rejected, because its wrap cannot be distinguished reliably. No claim
+of actual-hardware validation is made.
 
 ## EE-specific limitations (see attached EE Core user manual)
 
@@ -83,8 +116,8 @@ Host CI runs these checks in Debug and Release, including on draft PRs.
   calibration.
 - **Scheduler:** sleep/yield and EE worker creation are unsupported.
 - **Memory:** profile peak allocations and frame times on the real EE.
-- **Acceleration:** profile scalar narrowphase/contact solving before
-  implementing VU0 macro mode. MMI targets appropriate integer operations.
+- **Acceleration:** only aligned integer bitset zero/OR uses MMI so far.
+  Profile solver/narrowphase separately before tackling VU0 macro mode.
 
 The supplied hardware manual is a reference, not redistributed in the repo.
 
