@@ -80,14 +80,15 @@ The HUD shows `CPU`, `GPU`, and `USE`, estimated from EE CP0
 Count at nominal 294.912MHz. The CSV console logs every 60 frames:
 
 ```
-BOX3D_PERF,scene=9,frame=60,bodies=144,physics_ms=...,build_ms=...,gpu_wait_ms=...,vsync_idle_ms=...,work_pct=...,gif_qwords=...
+BOX3D_PERF,scene=9,frame=60,bodies=144,avg_physics_ms=...,avg_build_ms=...,avg_gpu_wait_ms=...,peak_work_ms=...,avg_work_pct=...,vsync_idle_ms=...,gif_qwords=...
 ```
 
-- `physics_ms`: Box3D `b3World_Step`
-- `build_ms`: EE draw-vertex and packed-GIF command generation
-- `gpu_wait_ms`: GIF DMA plus waiting for GS FINISH
+- `avg_physics_ms`: average Box3D `b3World_Step` over 60 frames
+- `avg_build_ms`: average EE draw-vertex and packed-GIF generation
+- `avg_gpu_wait_ms`: average GIF DMA + GS FINISH completion
+- `peak_work_ms`: slowest combined work frame in the 60-frame window
 - `vsync_idle_ms`: deliberately waiting for display VSync
-- `work_pct`: (physics + build + GPU completion) / 16.667ms * 100
+- `avg_work_pct`: average (physics + build + GPU completion) / 16.667ms * 100
 
 This is a pipeline elapsed-time estimate, **not raw GPU occupancy**.
 It exposes headroom when the emulator displays exactly 60fps and
@@ -115,3 +116,8 @@ cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic \
   ps2/unified_demo_test.c -o /tmp/b3_ps2_demo_test
 /tmp/b3_ps2_demo_test
 ```
+
+To keep tier comparisons meaningful even after all boxes land, **body
+sleeping is disabled on stress pages only**. Regular eight demos retain
+Box3D's default sleeping. The CSV output reports rolling 60-frame
+average work and peak duration; screen HUD uses the last frame.

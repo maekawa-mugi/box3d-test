@@ -121,6 +121,9 @@ static unsigned s_culledFaces, s_emittedFaces;
 static uint32_t s_beforeGsSubmitTicks;
 static float s_lastPhysicsMs,s_lastBuildMs,s_lastGpuMs,s_lastVsyncMs;
 static float s_lastWorkPct;
+static uint64_t s_sumPhysicsTicks,s_sumBuildTicks,s_sumGsTicks;
+static uint32_t s_maxWorkTicks;
+static int s_perfSamples;
 #endif
 #endif
 
@@ -182,6 +185,17 @@ static void scene_create(int kind)
 #endif
     b3WorldDef wd=b3DefaultWorldDef();
     wd.workerCount=1;
+#if defined(BOX3D_PS2_UNIFIED)
+    // Sustained physics stress should not disappear after the boxes
+    // settle and all island sleepers go idle. Force awake for tiers
+    // 64/144/256/400 only; regular demos keep natural sleeping.
+    if(kind>=8)wd.enableSleep=false;
+    s_sumPhysicsTicks=0;
+    s_sumBuildTicks=0;
+    s_sumGsTicks=0;
+    s_maxWorkTicks=0;
+    s_perfSamples=0;
+#endif
     s_scene.world=b3CreateWorld(&wd);
     const b3Quat identity={ {0,0,0},1 };
     const b3Vec3 noSpin={0,0,0};
@@ -1113,15 +1127,32 @@ int main(void)
             s_lastBuildMs=(float)buildTicks/ticksPerMs;
             s_lastGpuMs=(float)gpuTicks/ticksPerMs;
             s_lastVsyncMs=(float)vsyncTicks/ticksPerMs;
-            s_lastWorkPct=(float)(physicsTicks+buildTicks+gpuTicks)/
-                          (4915200.0f/100.0f);
-            if(s_frame%60==0)
-                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,physics_ms=%.3f,build_ms=%.3f,gpu_wait_ms=%.3f,vsync_idle_ms=%.3f,work_pct=%.1f,gif_qwords=%u\n",
-                       s_scene.kind,(unsigned long)s_frame,
-                       s_scene.count-1,
-                       (double)s_lastPhysicsMs,(double)s_lastBuildMs,
-                       (double)s_lastGpuMs,(double)s_lastVsyncMs,
-                       (double)s_lastWorkPct,b3GsGetLastGifQwords());
+            uint32_t workTicks=physicsTicks+buildTicks+gpuTicks;
+            s_lastWorkPct=(float)workTicks/(4915200.0f/100.0f);
+            s_sumPhysicsTicks+=physicsTicks;
+            s_sumBuildTicks+=buildTicks;
+            s_sumGsTicks+=gpuTicks;
+            if(workTicks>s_maxWorkTicks)s_maxWorkTicks=workTicks;
+            ++s_perfSamples;
+            if(s_perfSamples>=60)
+            {
+                double divisor=294912.0*(double)s_perfSamples;
+                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u\n",
+                       s_scene.kind,(unsigned long)s_frame,s_scene.count-1,
+                       (double)s_sumPhysicsTicks/divisor,
+                       (double)s_sumBuildTicks/divisor,
+                       (double)s_sumGsTicks/divisor,
+                       (double)s_maxWorkTicks/294912.0,
+                       (double)(s_sumPhysicsTicks+s_sumBuildTicks+
+                                s_sumGsTicks)/
+                         (4915200.0*(double)s_perfSamples/100.0),
+                       (double)s_lastVsyncMs,b3GsGetLastGifQwords());
+                s_perfSamples=0;
+                s_sumPhysicsTicks=0;
+                s_sumBuildTicks=0;
+                s_sumGsTicks=0;
+                s_maxWorkTicks=0;
+            }
         }
 #endif
 #if defined(BOX3D_GS_PROGRESSIVE)
