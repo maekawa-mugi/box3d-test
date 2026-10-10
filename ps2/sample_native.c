@@ -468,6 +468,13 @@ static void render_official_hud(void)
     b3GsOverlayText(14,25,sceneNames[s_scene.kind],189,214,223);
 #if defined(BOX3D_GS_PCF_SHADOWS)
     b3GsOverlayText(14,37,"GS PCF 3X3",188,226,240);
+    // Duplicate the build identity in the lower-right safe area.
+    // Test screenshots have sometimes been cropped so that the entire
+    // upper part of the HUD is outside the captured frame, leaving
+    // only the dark panel's lower edge visible. A second label also
+    // differentiates PCF from Kawase even when only the floor is shown.
+    b3GsOverlayPanel(219,184,93,30);
+    b3GsOverlayText(227,195,"PCF 3X3",250,236,130);
 #elif defined(BOX3D_GS_KAWASE_SHADOWS)
     b3GsOverlayText(14,37,"SOFT GS KAWASE",188,226,240);
 #endif
@@ -526,6 +533,7 @@ int main(void)
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
 #if defined(BOX3D_GS_PCF_SHADOWS)
     puts("BOX3D_SHADOW_FILTER,PCF_MASK_3X3,source=320x224,radius=1px,weight_sum=96");
+    puts("BOX3D_PCF_ACTIVE,mode=3x3_fullres_mask,HUD=top_left+bottom_right");
 #endif
     b3SetAssertFcn(fail_assert);
     b3SetLogFcn(log_message);
@@ -562,6 +570,13 @@ int main(void)
         }
 #endif
         ++s_frame;
+#if defined(BOX3D_GS_PCF_SHADOWS)
+        // Independent runtime proof for testers capturing the GS display
+        // without the upper HUD visible in screenshots.
+        if(s_frame%240==0)
+            printf("BOX3D_PCF_FRAME,frame=%lu,scene=%d,pcf=1\n",
+                   (unsigned long)s_frame,s_scene.kind);
+#endif
         if(s_frame%240==0)
         {
             b3Pos p=b3Body_GetPosition(s_scene.objects[s_scene.count-1].id);

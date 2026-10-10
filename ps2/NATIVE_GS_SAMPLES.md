@@ -384,3 +384,25 @@ Kawase ping-pong VRAM surfaces (about 175 KiB in raw texel storage).
 
 **The new PCF ELF has not yet been crosscompiled/run in PCS​​X2; the
 soft working screenshot validates only the older Kawase pipeline.**
+
+## PCF build identity when the PCSX2 HUD is cropped
+
+The tester's latest PCSX2 image showed the lower edge of the top-left
+dark HUD panel but none of its text, suggesting that a cropped screenshot
+or GS display-window alignment can remove the top few rows. The source
+*already* contains `GS PCF 3X3` under `BOX3D_GS_PCF_SHADOWS`, and
+`build_ee.sh` passes that flag exclusively to the PCF ELF; the absence
+of the label in a cropped image does not by itself prove Kawase was run.
+
+To make the chosen build unambiguous, `box3d_ps2_samples_pcf.elf`
+now draws a second `PCF 3X3` badge at screen pixel (219,184) in the
+lower-right safe area, in addition to the original upper-left HUD.
+It logs `BOX3D_PCF_ACTIVE` at startup and `BOX3D_PCF_FRAME` every
+240 simulation frames. Earlier hard/Kawase/official ELFs do not get
+this additional UI.
+
+If the lower-right `PCF 3X3` is absent after rebuilding and the boot
+log also lacks `BOX3D_PCF_ACTIVE`, verify PCSX2 was pointed at
+`ps2/box3d_ps2_samples_pcf.elf` (not
+`box3d_ps2_samples_softshadows.elf`) and verify that the new ELF
+was actually copied/reloaded.
