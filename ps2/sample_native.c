@@ -755,6 +755,13 @@ static void cornersForBody(const SceneBody* body,b3ShadowVec3 out[8])
     }
 #endif
 }
+#if defined(BOX3D_PS2_UNIFIED)
+// Real clipped silhouettes from the first PCSS radius-classification
+// pass, retained until all GS shadow-mask groups have been drawn.
+// Avoid repeating Box3D body transforms + convex hull/clip work for
+// every accepted box. Static EE BSS prevents large stack frames.
+static b3ShadowPolygon s_shadowProjectedCache[MAX_BOXES];
+#endif
 static void render_receiver_shadows(int receiver)
 {
     unsigned emittedTriangles=0;
@@ -822,6 +829,9 @@ static void render_receiver_shadows(int receiver)
         cornersForBody(&s_scene.objects[caster],corners);
         if(b3ShadowProjectBox(corners,direction,&plane,&poly)<3)
             continue;
+#if defined(BOX3D_PS2_UNIFIED)
+        s_shadowProjectedCache[caster]=poly;
+#endif
 
         // The actual nearest corner-plane gap, not the distance of
         // the body COM. Contact stays narrow, floating bodies soften.
@@ -893,23 +903,28 @@ static void render_receiver_shadows(int receiver)
 #if defined(BOX3D_GS_PCSS_SHADOWS)
             if(casterRadius[caster]!=pass)continue;
 #endif
+#if defined(BOX3D_PS2_UNIFIED)
+            const b3ShadowPolygon* poly=&s_shadowProjectedCache[caster];
+            if(poly->count<3)continue;
+#else
             b3ShadowVec3 corners[8];
-            b3ShadowPolygon poly;
+            b3ShadowPolygon localPoly;
             cornersForBody(&s_scene.objects[caster],corners);
-            if(b3ShadowProjectBox(corners,direction,&plane,&poly)<3)
+            if(b3ShadowProjectBox(corners,direction,&plane,&localPoly)<3)
                 continue;
-
+            const b3ShadowPolygon* poly=&localPoly;
+#endif
             ++projectedHulls;
-            b3ShadowVec3 w0=
-                b3ShadowOnReceiver(poly.vertices[0],&plane,0.045f);
-            b3GsPoint3 p0=toPoint3(w0);
-            for(int t=1;t+1<poly.count;++t)
+            // Convert each projected convex hull point only ONCE,
+            // rather than twice inside every fan triangle.
+            b3GsPoint3 hull[B3_SHADOW_MAX_VERTS];
+            for(int v=0;v<poly->count;++v)
+                hull[v]=toPoint3(b3ShadowOnReceiver(poly->vertices[v],
+                                                     &plane,0.045f));
+            for(int t=1;t+1<poly->count;++t)
             {
-                b3GsPoint3 p1=toPoint3(
-                    b3ShadowOnReceiver(poly.vertices[t],&plane,0.045f));
-                b3GsPoint3 p2=toPoint3(
-                    b3ShadowOnReceiver(poly.vertices[t+1],&plane,0.045f));
-                b3GsTriangle3(s_scene.camera,p0,p1,p2,39,48,56);
+                b3GsTriangle3(s_scene.camera,hull[0],hull[t],
+                              hull[t+1],39,48,56);
                 ++emittedTriangles;
             }
         }
