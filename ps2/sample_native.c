@@ -1377,7 +1377,8 @@ static void render_official_hud(void)
     // Display the specific hardware failure, not the same generic
     // "UNAVAIL" for startup one-group rejection and a live fallback.
     b3GsOverlayText(390,110,
-        microReady?"VU0 MICRO READY":b3Vu0MicroStatus(),
+        microReady?(b3Vu0SweepIsReady()?"VU0 SWEEP READY":"VU0 MICRO READY")
+                  :b3Vu0MicroStatus(),
         microReady?155:255,microReady?243:139,176);
     // Display previous frame's measured utilization, NOT PCSX2 FPS
     // capped to 60 by VSync. Includes physics, GS packet build and
