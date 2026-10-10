@@ -47,6 +47,10 @@ esac
 [ -f "$PS2SDK/ee/lib/libdebug.a" ] || die "Missing PS2SDK libdebug.a: $PS2SDK"
 [ -f "$PS2SDK/ee/lib/libkernel.a" ] || die "Missing PS2SDK libkernel.a: $PS2SDK"
 
+# Catch unbalanced GS conditional compilation in every renderer mode before
+# spending time on the physics build/link. Local guard, not GitHub Actions.
+sh "$ROOT/ps2/check_gs_preprocessor.sh"
+
 # The native PS2SDK executable, not a PS2 Linux userspace program, can read
 # privileged CP0 Count. Avoid reusing any host build directory or archive.
 "$CMAKE" -S "$ROOT" -B "$BUILD" -G "$GENERATOR" \
