@@ -170,7 +170,7 @@ static BenchResult run_physics( int mode, int side, int layers )
                 ids[index] = b3CreateBody( world, &def );
                 b3ShapeDef cubeShape = b3DefaultShapeDef();
                 cubeShape.density = 1.0f;
-                cubeShape.friction = 0.6f;
+                cubeShape.baseMaterial.friction = 0.6f;
                 b3CreateHullShape( ids[index], &cubeShape, &cube.base );
                 ++index;
             }
