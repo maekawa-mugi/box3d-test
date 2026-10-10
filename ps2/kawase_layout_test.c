@@ -12,7 +12,12 @@ static int tw(int v)
 static unsigned pageSize(unsigned w,unsigned height,unsigned bpp)
 {
     unsigned stride=((w+63u)/64u)*64u;
-    unsigned bytes=stride*height*bpp/8u;
+    // Physical GS page: PSMCT16/PSMZ16 64x64, PSMCT32 64x32.
+    // PS2SDK graph_vram_size() only pads stride, so our renderer
+    // explicitly supplies this padded height to graph_vram_allocate().
+    unsigned pageRows=bpp==16u?64u:32u;
+    unsigned paddedHeight=((height+pageRows-1u)/pageRows)*pageRows;
+    unsigned bytes=stride*paddedHeight*bpp/8u;
     return (bytes+8191u)&~8191u;
 }
 static unsigned layout(unsigned w,unsigned height,int progressive)
@@ -40,8 +45,12 @@ int main(void)
     assert(tw(160)==8 && tw(120)==7);
     assert(tw(80)==7 && tw(60)==6);
     assert(pageSize(40,28,32)==8192u);
-    assert(layout(320,224,0)==1409024u);
-    assert(layout(640,480,1)==3956736u);
+    assert(pageSize(640,480,16)==655360u);
+    assert(pageSize(320,240,32)==327680u);
+    assert(pageSize(80,60,32)==32768u);
+    assert(layout(320,224,0)==1425408u);
+    assert(layout(640,480,1)==4112384u);
+    assert(4194304u-layout(640,480,1)==81920u);
     assert(layout(640,480,1)<4u*1024u*1024u);
     printf("PASS: TEX0 640x480 TW/TH 10/9, 40x28 8KiB pages, 480p wide VRAM %u/4194304 bytes\n",
            layout(640,480,1));

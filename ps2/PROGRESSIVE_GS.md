@@ -125,8 +125,8 @@ relative to the old two-level pyramid. The path is:
 The `box3d_ps2_samples_kawase_wide_progressive.elf` applies the
 same **1/8** ratio at 640x480: its stages are 320x240, 160x120,
 and 80x60, each with separate source/destination buffers. Its total
-page-rounded GS VRAM surface budget is **3,956,736 / 4,194,304 bytes**,
-leaving only 237,568 bytes for other GS resources. For the normal
+page-rounded GS VRAM surface budget is **4,112,384 / 4,194,304 bytes**,
+leaving only 81,920 bytes for other GS resources. For the normal
 320x224 case, each 40x28 PSMCT32 page requires precisely 8192 bytes.
 The Kawase additions involve more GIF register writes, raster passes
 and GPU bandwidth; no speedup is implied.
@@ -221,3 +221,39 @@ Check FPS and GS packet overflow logs as before.
 cross-link, actual AA1 blending, 480p screenshot and performance
 remain unverified in this assistant environment.** The branch is
 pushed, but this screenshot belongs to the *pre-fix* executable.
+
+## Fix: GS page-height overlap in 640x480 software-renderer output
+
+The PCSX2 software renderer showed unrelated frame fragments at the
+top of the image and black rectangular areas near the bottom in the
+480p extended Kawase executable. Inspecting PS2SDK's
+`ee/graph/src/graph_vram.c` revealed that `graph_vram_size()`
+rounds **framebuffer width and word alignment** but does **not**
+round height up to the *physical* GS page height.
+
+GS PSMCT16/PSMZ16 pages have **64x64 pixels** and PSMCT32
+pages have **64x32 pixels**, with each page occupying 8192 bytes.
+Consequently a logical 640x480 PSMCT16 double buffer needs
+a 640x512 allocation for **each** color buffer and the Z buffer.
+Similarly 320x240 PSMCT32 half-resolution blur targets require
+320x256 allocations. Previously those tail pages could overwrite the
+next GS VRAM surface despite the aggregate byte count appearing valid.
+
+The renderer now passes the physical page-rounded height to
+`graph_vram_allocate()` for every allocated color/Z/raw/blur surface.
+It keeps the original logical width, height, DISPLAY/DISPFB, SCISSOR,
+TEX0 TW/TH and all existing ELF names. On 640x480 wide Kawase the
+correct allocation totals **4,112,384 / 4,194,304 bytes**, leaving
+**81,920 bytes**. The end address is computed from the last allocation
+at runtime and emitted as:
+
+```
+BOX3D_GS_VRAM,mode=480p_wide,total_bytes=4112384,limit_bytes=4194304,free_bytes=81920
+```
+
+`ps2/kawase_layout_test.c` now checks page-height padding and
+both the 320x224 and 640x480 actual buffer layouts. No added
+ELF variants or rendering features are needed to correct this.
+
+**The 480p software-renderer screenshot precedes this fix; the
+revised PS2DEV ELF and PCSX2 render still need tester confirmation.**
