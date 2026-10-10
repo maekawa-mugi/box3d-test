@@ -98,6 +98,8 @@ static int s_simSubsteps=4;
 static int s_stressSleeping=0; // Default: force all bodies awake in BENCH scenes
 static int s_vu0Mode=0;
 static int s_shadowVisualMode=0; // 0=PCSS,1=PCF,2=HARD,3=OFF,4=LEGACY
+// Valid only for static-camera, fully sleeping BENCH scenes.
+static int s_shadowBenchCacheValid;
 static int s_vu1Ready;
 // No VU1 initialization at program startup: keep the proven EE path
 // usable even if MPG/MMIO verification fails on the target emulator.
@@ -196,6 +198,8 @@ static int pad_nav_poll(void)
     if(pressed&PAD_SQUARE)
     {
         s_shadowVisualMode=(s_shadowVisualMode+1)%5;
+        // Geometry may have changed while shadow drawing was disabled.
+        s_shadowBenchCacheValid=0;
         b3GsSetShadowFilterMode(s_shadowVisualMode==3?0:
                                 s_shadowVisualMode==4?3:s_shadowVisualMode);
         printf("BOX3D_SHADOW_MODE,mode=%d,label=%s\n",
@@ -330,6 +334,7 @@ static void scene_create(int kind)
     s_scene.kind=kind;
 #if defined(BOX3D_PS2_UNIFIED)
     b3GsInvalidateGroundCache();
+    s_shadowBenchCacheValid=0;
 #endif
     // Reuse the backing array across scenes without stale local offsets.
     for(int i=0;i<MAX_BOXES;++i)s_scene.objects[i].localCenter=pt(0,0,0);
@@ -912,6 +917,8 @@ static b3Ps2ShadowBounds s_shadowBounds[MAX_BOXES];
 static b3Ps2ShadowBounds s_shadowUnions[MAX_BOXES];
 static int s_shadowParents[MAX_BOXES];
 static int s_shadowFirst[MAX_BOXES],s_shadowNext[MAX_BOXES];
+static unsigned s_shadowCachedProjected;
+static int s_shadowCachedGroups,s_shadowCachedMinRadius,s_shadowCachedMaxRadius;
 #endif
 #if defined(BOX3D_PS2_UNIFIED)
 // One GS subtractive composite per connected component of overlapping
@@ -924,8 +931,13 @@ static void render_receiver_shadows(int receiver)
     b3ShadowReceiver plane=makeReceiver(receiver);
     unsigned projected=0,triangles=0;
     int minRadius=5,maxRadius=0;
-    // Only valid projected shadows take part in the union-find.
-    for(int i=0;i<s_scene.count;++i)s_shadowBounds[i].valid=0;
+    int groups=0;
+    // Only when all BENCH bodies sleep can the frame's shadow
+    // polygons and union groups be copied from the previous frame.
+    // Camera and light are fixed for these stress-scene pages.
+    const int cacheHit=receiver==0 && s_scene.kind>=8 &&
+        s_stressSleeping && s_shadowBenchCacheValid &&
+        b3World_GetAwakeBodyCount(s_scene.world)==0;
     float cameraZ=
         (plane.origin.x-s_scene.camera.eye.x)*s_scene.camera.forward.x+
         (plane.origin.y-s_scene.camera.eye.y)*s_scene.camera.forward.y+
@@ -958,6 +970,18 @@ static void render_receiver_shadows(int receiver)
         majorX=(dx>=dy);
     }
 
+    if(cacheHit)
+    {
+        projected=s_shadowCachedProjected;
+        minRadius=s_shadowCachedMinRadius;
+        maxRadius=s_shadowCachedMaxRadius;
+        groups=s_shadowCachedGroups;
+    }
+    else
+    {
+        // Shadows off and scene changes invalidate this cache.
+        // While physics bodies remain awake, rebuild every frame.
+        for(int i=0;i<s_scene.count;++i)s_shadowBounds[i].valid=0;
     for(int caster=1;caster<s_scene.count;++caster)
     {
         if(caster==receiver)continue;
@@ -1016,7 +1040,7 @@ static void render_receiver_shadows(int receiver)
             b->y1=B3_PS2_GS_H-1;
         }
     }
-    int groups=b3Ps2ShadowGroup(s_shadowBounds,s_scene.count,
+    groups=b3Ps2ShadowGroup(s_shadowBounds,s_scene.count,
                                 s_shadowParents,s_shadowUnions);
     // Build the member list once instead of rescanning all N casters
     // for each of the potentially N disconnected components.
@@ -1027,6 +1051,15 @@ static void render_receiver_shadows(int receiver)
         int root=s_shadowParents[caster];
         s_shadowNext[caster]=s_shadowFirst[root];
         s_shadowFirst[root]=caster;
+    }
+        if(receiver==0 && s_scene.kind>=8)
+        {
+            s_shadowCachedProjected=projected;
+            s_shadowCachedMinRadius=minRadius;
+            s_shadowCachedMaxRadius=maxRadius;
+            s_shadowCachedGroups=groups;
+            s_shadowBenchCacheValid=1;
+        }
     }
     for(int root=1;root<s_scene.count;++root)
     {
@@ -1074,9 +1107,9 @@ static void render_receiver_shadows(int receiver)
     }
     if(s_frame%240==0)
     {
-        printf("BOX3D_PCSS_UNION,scene=%d,receiver=%d,casters=%u,components=%d,composites=%d,radius_min=%d,radius_max=%d,major_axis=%c\n",
+        printf("BOX3D_PCSS_UNION,scene=%d,receiver=%d,casters=%u,components=%d,composites=%d,radius_min=%d,radius_max=%d,major_axis=%c,shadow_cache=%d\n",
                s_scene.kind,receiver,projected,groups,groups,
-               projected?minRadius:0,maxRadius,majorX?'X':'Y');
+               projected?minRadius:0,maxRadius,majorX?'X':'Y',cacheHit);
         printf("BOX3D_SHADOW_RECEIVERS,scene=%d,receiver=%d,hulls=%u,triangles=%u\n",
                s_scene.kind,receiver,projected,triangles);
     }
@@ -1370,7 +1403,7 @@ static void render_official_hud(void)
     // visible in the EE-only first diagnostic stage, even if a later
     // VIF1 stage deadlocks before the next Present().
     b3GsOverlayPanel(374,14,252,132);
-    b3GsOverlayText(390,26,"TRIANGLE VU1R7",255,233,116);
+    b3GsOverlayText(390,26,"TRIANGLE VU1R8",255,233,116);
     char padInfo[40];
     snprintf(padInfo,sizeof(padInfo),"PRESS %u",
              s_trianglePressCount);
@@ -1705,7 +1738,7 @@ int main(void)
     // until the user enters the explicit INIT diagnostic stage.
     s_vu1Ready=0;
     puts("BOX3D_VU1_STARTUP,lazy=1,ready=0,ee_safe=1");
-    puts("BOX3D_VU1_BUILD,revision=vu1r7_bench_sleep_probe");
+    puts("BOX3D_VU1_BUILD,revision=vu1r8_sleep_shadow_cache");
     puts("BOX3D_VU1_SAFE_DEFAULT,ee_geometry=1,triangle=ack_path3_init_arm_init_verify_arm_verify_vif_boot");
 #endif
 #if defined(BOX3D_PS2_PAD_NAV)

@@ -896,3 +896,33 @@ a time. Normal non-BENCH scenes retain their default sleeping.
 
 No performance gain has yet been measured in PCSX2 for this change,
 and this is a workload-mode control rather than a solver optimization.
+
+## 2026-10-11: VU1R8 cache shadow geometry for fully sleeping benchmarks
+
+User measurements on identical BENCH 400, S4, D400, SL1:
+SHADOW PCF gave PHYS 0.0 ms, DRAW 22.7 ms, GSWAIT 0.0 ms,
+about 30 FPS; SHADOW OFF gave PHYS 0.0 ms, DRAW 3.7 ms,
+GSWAIT 0.0 ms, 60 FPS. The extra approximately 19 ms of EE
+render work is in the shadow generation/compositing path, not
+in the Box3D solver or basic VU1 geometry. PCSS had a similar
+DRAW figure on the previous screenshot.
+
+**Opt-in automatic optimization, only on BENCH pages:**
+when world sleeping is enabled (SL1), the Box3D awake-body count
+is exactly zero, receiver=ground and the stress-scene camera is
+fixed, reuse the previously projected shadow polygons, 2D screen
+coordinates, mask bounds, union groups and shadow linked lists.
+Continue issuing *all* GS shadow mask/composite commands every
+frame, preserving correct framebuffer flipping, visual quality and
+dynamic PCF/PCSS/legacy filter changes. Do not reuse on any frame
+with an awake body, on SL0, or in regular demos. Invalidate the
+geometry cache on scene creation and when shadow filter mode changes
+(including returning from SHADOW OFF).
+
+The periodic `BOX3D_PCSS_UNION` log includes `shadow_cache=1`
+for a reused geometry frame and `shadow_cache=0` for a rebuild.
+No VU1 microprogram/DMA or Box3D solver modifications were made.
+Runtime performance is not yet verified in PCSX2; this targets CPU
+shadow projection/grouping, not the remaining cost of GS commands.
+Measure SHADOW PCF/PCSS vs SHADOW OFF after settling at SL1, and
+check for matching shadow silhouettes before reporting improvement.
