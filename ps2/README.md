@@ -246,3 +246,31 @@ and target mode explicitly to prevent treating mode-2 results as COP1-only.
 If mode 3 is slower, keep mode 2; this is an opt-in experiment, not the
 default path. VU0 and PS2DEV crosscompilation of this latest experiment
 remain unverified pending the next PCSX2 tester run.
+
+## ABBA mode2->mode3 correctness fix / Amdahl bound
+
+The first mode2-vs-mode3 PCSX2 screenshot erroneously displayed
+`mode2 0 / mode3 ~3199847 cyc/step (x0.000)`. This was not a measurement:
+the reducer grouped modes using `if(mode)`, so both **nonzero** modes
+were accumulated in the target. Fixed with a shared, host-testable
+`b3Ps2SummarizeABBA` reducer, grouping trials [0,3] vs [1,2] regardless
+of selected mode numbers. Host regression:
+
+```sh
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+    ps2/abba_stats_test.c -o /tmp/box3d_abba_stats_test
+/tmp/box3d_abba_stats_test
+```
+
+`BOX3D_AMDAHL` now uses Box3D's existing phase measurements to print
+the solver's fraction of the total step and the **theoretical maximum**
+end-to-end acceleration if the solver alone were infinitely fast or 16x
+faster. These are upper bounds under the assumption that all other
+work remains unchanged, not predictions of VU0 performance.
+
+VU0 peak vector multiply-add throughput assumes fully occupied four
+float lanes and sustained issue, with data resident in VF registers.
+Transferring/packing little dot4 jobs repeatedly and the scalar control
+and broadphase paths do not meet those assumptions. Keep the old
+mode2 backend as the performance/correctness reference until a new
+experiment improves whole-engine `BOX3D_VU0_SUMMARY` on PCSX2.

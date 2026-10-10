@@ -6,6 +6,7 @@
 #include "../src/ps2_vu0.h"
 #include "../src/simd.h"
 #include "ee_clock.h"
+#include "abba_stats.h"
 
 #include <debug.h>
 #include <kernel.h>
@@ -534,7 +535,7 @@ static void vu0_scene_benchmark( const char* label, int side, int layers, int ba
     // mode 2 against mode 3 isolates preparation-stage pair rewrites.
     const int modes[4] = { baselineMode, targetMode, targetMode, baselineMode };
     BenchResult runs[4];
-    uint64_t baseline = 0, vu0 = 0;
+    uint64_t trialTicks[4] = { 0 };
     for ( int i = 0; i < 4; ++i )
     {
         runs[i] = run_physics( 0, modes[i], side, layers );
@@ -552,8 +553,10 @@ static void vu0_scene_benchmark( const char* label, int side, int layers, int ba
         {
             screen_stop( "VU0 extended pairing unused in physics" );
         }
-        if ( modes[i] ) vu0 += runs[i].ticks;
-        else baseline += runs[i].ticks;
+        // ABBA: trials 0/3 are the chosen baseline (which may be mode 2),
+        // trials 1/2 are the target. Checking 'if (modes[i])' was WRONG
+        // and yielded x0.000 in the previous mode2-vs-mode3 screen.
+        trialTicks[i] = runs[i].ticks;
     }
     // VU is a different FPU with different rounding and no NaNs. Compare
     // on finite test states with a tolerance; do not demand bit-identical
@@ -567,14 +570,18 @@ static void vu0_scene_benchmark( const char* label, int side, int layers, int ba
             screen_stop( "VU0 changed physics beyond tolerance" );
         }
     }
-    const double ratio = vu0 ? (double)baseline/(double)vu0 : 0.0;
+    b3Ps2ABBAStats totals = b3Ps2SummarizeABBA( trialTicks );
+    const uint64_t baseline = totals.baselineTicks;
+    const uint64_t target = totals.targetTicks;
+    if ( baseline == 0 || target == 0 ) screen_stop( "ABBA zero-sized trial" );
+    const double ratio = totals.speedup;
     char display[160];
     snprintf( display, sizeof(display), "%s: mode%d %llu / mode%d %llu cyc/step (x%.3f)",
               label,baselineMode,(unsigned long long)(baseline/(2*BENCH_STEPS)),
-              targetMode,(unsigned long long)(vu0/(2*BENCH_STEPS)),ratio );
+              targetMode,(unsigned long long)(target/(2*BENCH_STEPS)),ratio );
     screen_line( display );
     printf( "BOX3D_VU0_SUMMARY,%s,base_mode=%d,target_mode=%d,base_ticks=%llu,target_ticks=%llu,ratio=%.5f,correct=1\n",
-            label,baselineMode,targetMode,(unsigned long long)baseline,(unsigned long long)vu0,ratio );
+            label,baselineMode,targetMode,(unsigned long long)baseline,(unsigned long long)target,ratio );
 
     // Phase averages are averaged over two scalar trials and two VU0
     // trials. Separate pairs/collide/solve from total step time to decide
@@ -587,6 +594,19 @@ static void vu0_scene_benchmark( const char* label, int side, int layers, int ba
     const double vu0Solve = 0.5 * (runs[1].profileSolveMs + runs[2].profileSolveMs) / BENCH_STEPS;
     printf( "BOX3D_VU0_PHASE_SUMMARY,%s,base_mode=%d,target_mode=%d,base_pairs_ms=%.5f,target_pairs_ms=%.5f,base_collide_ms=%.5f,target_collide_ms=%.5f,base_solve_ms=%.5f,target_solve_ms=%.5f\n",
             label,baselineMode,targetMode,scalarPairs,vu0Pairs,scalarCollide,vu0Collide,scalarSolve,vu0Solve );
+
+    // Amdahl's law: even infinitely fast *solve* leaves the rest of Step.
+    // Derived from actual Box3D profile, not from peak quoted VU0 FLOPS.
+    const double baseStep = 0.5 * (runs[0].profileStepMs + runs[3].profileStepMs);
+    const double baseSolve = 0.5 * (runs[0].profileSolveMs + runs[3].profileSolveMs);
+    if ( baseStep > 0.0 && baseSolve >= 0.0 && baseSolve < baseStep )
+    {
+        const double solveShare = baseSolve / baseStep;
+        const double maxSpeedup = baseStep / (baseStep - baseSolve);
+        const double at16xSolve = 1.0 / (1.0 - solveShare + solveShare / 16.0);
+        printf( "BOX3D_AMDAHL,%s,base_mode=%d,solve_share=%.5f,solver_only_infinite_limit=%.3f,solver_16x_total_limit=%.3f\n",
+                label,baselineMode,solveShare,maxSpeedup,at16xSolve );
+    }
     snprintf( display,sizeof(display),"Phase ms: P %.2f/%.2f C %.2f/%.2f S %.2f/%.2f",
               scalarPairs,vu0Pairs,scalarCollide,vu0Collide,scalarSolve,vu0Solve );
     screen_line( display );
