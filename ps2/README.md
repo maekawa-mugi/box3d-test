@@ -740,3 +740,56 @@ remain unverified here.** The host arithmetic/padding check and
 source-level conditional-compilation balance checks passed. If the
 controller does not initialize, serial logs begin with
 `BOX3D_PAD_WARN`; pad-enabled variants continue cycling scenes.
+
+## AA1, 12.4 subpixel edges and less-blurry wide shadows (2026-10-10)
+
+A PCSX2 screenshot of the native 480p wide-shadow variant showed
+substantial overblur and floor grid lines visible *through* the inclined
+opaque slab. These are distinct defects. The grid issue was primarily
+caused by using the old Z32 outline depth bias of **+4096** unchanged
+in the new Z16 renderer. In Z16, this could move floor grid lines
+in front of a closer solid ramp.
+
+The existing **480p** PCF and wide-Kawase renderers (no new ELF) now:
+- Compute projected 3D triangle and line XY coordinates in GS **12.4**
+  fixed-point. The old implementation truncated 3D positions to
+  integer pixels before packing XY2, wasting GS subpixel precision.
+  Depth is still interpolated by GS across filled polygons.
+- Enable **PRIM.AA1=1 and PRIM.ABE=1** for GS line primitives and
+  source-over alpha blending, smoothing the procedural grid and
+  the box silhouette outlines. Hardware AA1 applies to *lines*,
+  **not antialiased coverage of filled triangle edges**; filled edges
+  gain subpixel positioning but remain single-sample GS rasterized.
+  No false claim of full-scene MSAA is made.
+- Reduce the progressive Z16 line depth bias from **+4096 to +1
+  quantum**, preserving ordinary occlusion behind opaque geometry.
+  Legacy Z32 versions continue using their original bias.
+
+Only the existing `BOX3D_GS_KAWASE_WIDE` output path additionally
+changes the blur composition. It still renders its eighth-resolution
+stage, but subtracts the 320x224 or 640x480 **unblurred RAW shadow**
+with GS FIX=72 and mixes just four tight (`+/-1px`) wide-blur taps
+at FIX=6 each. The total is 96 GS alpha FIX units:
+**75% crisp mask + 25% wide blurred mask**. It also reduces the
+quarter-to-half upsample offset from 2px to 1px on wide builds.
+This keeps contact shadow cores sharp and a low-opacity soft penumbra
+without changing the VRAM reservation or generating another ELF.
+
+Build/test the SAME existing targets:
+```sh
+git pull --ff-only origin experiment/ps2-ee-scalar
+sh ps2/build_ee.sh
+# ps2/box3d_ps2_samples_kawase_wide_progressive.elf
+# ps2/box3d_ps2_samples_pcf_progressive.elf
+```
+
+Check that the previously transparent-looking incline now occludes
+the checkered grid correctly, that box contours/grid lines are
+smoother, and that shadow edges stay in focus while retaining slight
+wide softness. Compare PCF against wide Kawase at the same scene.
+Check FPS and GS packet overflow logs as before.
+
+**Source-level GS macro and preprocessor checks passed; PS2DEV
+cross-link, actual AA1 blending, 480p screenshot and performance
+remain unverified in this assistant environment.** The branch is
+pushed, but this screenshot belongs to the *pre-fix* executable.
