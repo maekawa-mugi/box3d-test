@@ -25,7 +25,7 @@ extern u32 B3Vu1Boxes_CodeEnd __attribute__((section(".vudata")));
 enum { B3_VU1_VIF_QWORDS=8192, B3_VU1_CODE_QWORDS=256 };
 static packet2_t* s_vifPacket;
 static _Alignas(64) b3Vu1BoxInput s_upload[B3_VU1_MAX_BOXES];
-static _Alignas(64) float s_camera[6][4];
+static _Alignas(64) float s_camera[7][4];
 static _Alignas(64) uint32_t s_indices[36][4];
 static _Alignas(64) uint64_t s_gifTag[2];
 static b3GsCamera s_currentCamera;
@@ -122,7 +122,7 @@ int b3Vu1BoxesInit(void)
     return 1;
 }
 
-void b3Vu1BoxesBegin(b3GsCamera c)
+void b3Vu1BoxesBegin(b3GsCamera c,int emitToGs)
 {
     s_count=0;
     s_currentCamera=c;
@@ -152,6 +152,12 @@ void b3Vu1BoxesBegin(b3GsCamera c)
     s_camera[5][1]=(2048.0f+B3_PS2_GS_H*0.5f)*16.0f;
     s_camera[5][2]=-30000.0f/220.0f;
     s_camera[5][3]=0.0f;
+    // VU1 control word in DMEM[6].x. Value is only compared with
+    // integer zero after ILW, so 0.0f and 1.0f are both suitable.
+    s_camera[6][0]=emitToGs?1.0f:0.0f;
+    s_camera[6][1]=0.0f;
+    s_camera[6][2]=0.0f;
+    s_camera[6][3]=0.0f;
 }
 
 int b3Vu1BoxesAdd(const b3GsPoint3 corners[8],
@@ -206,7 +212,7 @@ int b3Vu1BoxesSubmit(void)
 {
     if(!s_ready || s_count==0)return 0;
     packet2_reset(s_vifPacket,0);
-    packet2_utils_vu_add_unpack_data(s_vifPacket,0,s_camera,6,0);
+    packet2_utils_vu_add_unpack_data(s_vifPacket,0,s_camera,7,0);
     for(int i=0;i<s_count;++i)
     {
         // DMA REF sources stay live and aligned throughout the transfer.

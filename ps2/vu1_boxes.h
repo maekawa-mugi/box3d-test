@@ -15,7 +15,9 @@ typedef struct b3Vu1BoxInput
 // Initialize once, after the GS has initialized its GIF channel.
 // Returns zero if packet2/VIF1 could not initialize.
 int b3Vu1BoxesInit(void);
-void b3Vu1BoxesBegin(b3GsCamera camera);
+// emitToGs=0 runs full VU1 transform/assembly but skips XGKICK.
+// Diagnostic output must still be drawn through the EE fallback.
+void b3Vu1BoxesBegin(b3GsCamera camera,int emitToGs);
 int b3Vu1BoxesAdd(const b3GsPoint3 corners[8],
                   const uint8_t colors[6][3]);
 // Called only after b3GsFlushForVu1 has completed PATH3.

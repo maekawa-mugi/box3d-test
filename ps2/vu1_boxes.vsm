@@ -68,7 +68,17 @@ vu1_emit_loop:
         NOP                                NOP
         NOP                                ibne        VI04,VI12,vu1_emit_loop
         NOP                                NOP
+        ; Camera constant DMEM[6].x selects whether to emit PATH1.
+        ; 0 = transform/assemble only (no XGKICK), 1 = actual GS draw.
+        ; This distinguishes a VIF/VU stall from a GIF PATH1 stall.
+        NOP                                ilw.x       VI14,6(VI00)
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                ibeq        VI14,VI00,vu1_done
+        NOP                                NOP
         NOP                                xgkick      VI05
+vu1_done:
         NOP[E]                             NOP
         NOP                                NOP
         .align 4

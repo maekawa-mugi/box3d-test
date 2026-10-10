@@ -466,3 +466,27 @@ run in D0. Then enter D1 on BENCH 64 and copy the last
 D400 after the earlier level visibly runs for several frames. Compare
 DRAW/PHYS against the same scene with D0. A black screen is **not
 treated as solved** until PCSX2 confirms VU1 output.
+
+## 2026-10-10: one-box VU1 blackout: separate VU from XGKICK
+
+A tester confirms that **D0 remains visible but D1 blacks out even with
+one VU1 box**. This is not a large-box-count performance issue, and
+the current data does not prove which synchronization or VU instruction
+is responsible. To isolate it, the TRIANGLE selector is now:
+
+- **D0**: pure EE, known visible;
+- **DT**: submit **one box to the same VIF1/VU1 projection program,
+  but skip XGKICK** via a VU1 DMEM flag; the EE still draws that box;
+- **D1**: VU1 with XGKICK for one box;
+- **D8**: VU1 with XGKICK for eight boxes;
+- **D400**: VU1 with XGKICK for all eligible boxes.
+
+This does not pretend to fix D1 yet. Test BENCH 64 at DT first.
+If DT goes black, the failure is in VIF1 or VU1 program execution,
+before any GIF PATH1 output. If DT remains visible but D1 blacks out,
+then focus on XGKICK/PATH1 and the GIF output packet. The EE console
+prints `BOX3D_VU1_PHASE,before_path3_flush` with `emit=0/1`,
+`after_path3_flush`, `before_vif1_dma` and `after_vif1_dma`.
+Copy the **last line printed before blackout** to identify the stalled
+operation. A finite DMA wait alone cannot repair a locked VU1 or GS.
+D0 is the default, and the PCSS filtering is untouched.

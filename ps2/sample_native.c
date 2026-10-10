@@ -99,7 +99,8 @@ static int s_vu0Mode=0;
 static int s_shadowVisualMode=0; // 0=PCSS,1=PCF,2=HARD,3=OFF,4=LEGACY
 static int s_vu1Ready;
 // Default to proven EE geometry after a reported VU1 black-screen hang.
-// TRIANGLE opt-in stages: EE -> 1 box -> 8 boxes -> all -> EE.
+// TRIANGLE: D0 EE -> DT VIF/VU transform without XGKICK ->
+// D1 one real VU1 box -> D8 eight -> D400 all -> D0.
 static int s_vu1Budget=0;
 static int s_lastVu1Boxes;
 #endif
@@ -154,7 +155,8 @@ static int pad_nav_poll(void)
     }
     if(pressed&PAD_TRIANGLE)
     {
-        s_vu1Budget=(s_vu1Budget==0)?1:
+        s_vu1Budget=(s_vu1Budget==0)?-1:
+                    (s_vu1Budget<0)?1:
                     (s_vu1Budget==1)?8:
                     (s_vu1Budget==8)?B3_VU1_MAX_BOXES:0;
         printf("BOX3D_VU1_MODE,budget=%d,available=%d\n",
@@ -1285,9 +1287,13 @@ static void render_official_hud(void)
     b3GsOverlayText(28,24,"BOX3D PS2 480P",239,245,247);
     b3GsOverlayText(28,53,sceneNames[s_scene.kind],189,214,223);
     char page[48];
-    snprintf(page,sizeof(page),"PAGE %d/%d PCSS S%d D%d",
-             s_scene.kind+1,SCENE_COUNT,s_simSubsteps,
-             s_vu1Ready&&s_scene.kind>=8?s_vu1Budget:0);
+    if(s_vu1Ready && s_scene.kind>=8 && s_vu1Budget<0)
+        snprintf(page,sizeof(page),"PAGE %d/%d PCSS S%d DT",
+                 s_scene.kind+1,SCENE_COUNT,s_simSubsteps);
+    else
+        snprintf(page,sizeof(page),"PAGE %d/%d PCSS S%d D%d",
+                 s_scene.kind+1,SCENE_COUNT,s_simSubsteps,
+                 s_vu1Ready&&s_scene.kind>=8?s_vu1Budget:0);
     b3GsOverlayText(28,82,page,221,233,244);
 #else
     b3GsOverlayPanel(14,14,310,104);
@@ -1442,15 +1448,22 @@ static void render(void)
     phaseStart=b3Ps2ReadCpuCycles();
 #endif
 #if defined(BOX3D_PS2_UNIFIED)
-    if(s_scene.kind>=8 && s_vu1Ready && s_vu1Budget>0)
+    if(s_scene.kind>=8 && s_vu1Ready && s_vu1Budget!=0)
     {
-        b3Vu1BoxesBegin(s_scene.camera);
+        const int diagnostic=s_vu1Budget<0;
+        const int maxQueued=diagnostic?1:s_vu1Budget;
+        b3Vu1BoxesBegin(s_scene.camera,!diagnostic);
         int queued=0;
         for(int i=firstDynamic;i<s_scene.count;++i)
         {
             const SceneBody* body=&s_scene.objects[i];
-            if(queued<s_vu1Budget && queue_vu1_box(body))
+            if(queued<maxQueued && queue_vu1_box(body))
+            {
                 ++queued;
+                // Diagnostic VU transform does not XGKICK; retain an
+                // EE-drawn copy so the picture stays fully visible.
+                if(diagnostic)draw_box(body);
+            }
             else
                 draw_box(body);
         }
@@ -1459,8 +1472,8 @@ static void render(void)
             // PATH3: floor + PCSS + any exceptional EE solids.
             // PATH1: VU1-generated GS triangles, followed by HUD PATH3.
             if(s_frame<2)
-                printf("BOX3D_VU1_PHASE,before_path3_flush,scene=%d,queued=%d\n",
-                       s_scene.kind,queued);
+                printf("BOX3D_VU1_PHASE,before_path3_flush,scene=%d,queued=%d,emit=%d\n",
+                       s_scene.kind,queued,!diagnostic);
             if(b3GsFlushForVu1())
             {
                 if(s_frame<2)
@@ -1523,7 +1536,7 @@ int main(void)
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
 #if defined(BOX3D_PS2_UNIFIED)
-    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off_legacy,TRIANGLE=vu1_ee_1_8_all");
+    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off_legacy,TRIANGLE=vu1_ee_test_1_8_all");
 #endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
@@ -1552,7 +1565,7 @@ int main(void)
 #if defined(BOX3D_PS2_UNIFIED)
     s_vu1Ready=b3Vu1BoxesInit();
     if(!s_vu1Ready)puts("BOX3D_VU1_FALLBACK,reason=init");
-    puts("BOX3D_VU1_SAFE_DEFAULT,ee_geometry=1,triangle=one_eight_all");
+    puts("BOX3D_VU1_SAFE_DEFAULT,ee_geometry=1,triangle=test_one_eight_all");
 #endif
 #if defined(BOX3D_PS2_PAD_NAV)
     pad_nav_init();
