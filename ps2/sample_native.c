@@ -403,19 +403,19 @@ static void cornersForBody(const SceneBody* body,b3ShadowVec3 out[8])
         };
     }
 }
-static void render_receiver_shadows(void)
+static void render_receiver_shadows(int receiver)
 {
     unsigned emittedTriangles=0;
     unsigned projectedHulls=0;
     // Same directional-light orientation as the face lighting.
     const b3ShadowVec3 direction={-0.44f,-0.82f,-0.36f};
-    const int receiverCount=s_scene.kind==1?2:1;
 
-    // Render shadows AFTER opaque bodies, using the actual receiver Z
-    // already in GS ZBUF. Shadow pass sets ZMSK=1 and source-over alpha;
-    // only the visible top face of each receiver may be darkened.
+    // A receiver is already drawn. Its shadow polygon is clipped
+    // geometrically to the receiver bounds, and the next, opaque
+    // geometry pass covers shadows on occluders. Do NOT Z-test the mask
+    // here: the GS shadow/floor triangulations have different pixel
+    // coverage rules, which was destroying most of the mask.
     b3GsShadowBegin();
-    for(int receiver=0;receiver<receiverCount;++receiver)
     {
         b3ShadowReceiver plane=makeReceiver(receiver);
         for(int caster=1;caster<s_scene.count;++caster)
@@ -448,8 +448,8 @@ static void render_receiver_shadows(void)
     // Console diagnostics: prove complete silhouettes and both potential
     // receivers were actually processed, independently of screenshots.
     if(s_frame%240==0)
-        printf("BOX3D_SHADOW_RECEIVERS,scene=%d,receivers=%d,hulls=%u,triangles=%u\n",
-               s_scene.kind,receiverCount,projectedHulls,emittedTriangles);
+        printf("BOX3D_SHADOW_RECEIVERS,scene=%d,receiver=%d,hulls=%u,triangles=%u\n",
+               s_scene.kind,receiver,projectedHulls,emittedTriangles);
 }
 #endif
 
@@ -480,8 +480,21 @@ static void render(void)
     b3GsSkyGradient();
     render_ground();
 #if defined(BOX3D_GS_RECEIVER_SHADOWS)
-    for(int i=1;i<s_scene.count;++i) draw_box(&s_scene.objects[i]);
-    render_receiver_shadows();
+    // Layered receiver rendering prevents Z-tested shadow holes:
+    // 1. floor shadows are composited onto the floor
+    // 2. opaque ramp covers any floor shadows behind it
+    // 3. ramp-local shadows land on the now-visible ramp
+    // 4. dynamics are drawn last and occlude their own floor shadows.
+    render_receiver_shadows(0);
+    int firstDynamic=1;
+    if(s_scene.kind==1)
+    {
+        draw_box(&s_scene.objects[1]); // static inclined plane
+        render_receiver_shadows(1);
+        firstDynamic=2;
+    }
+    for(int i=firstDynamic;i<s_scene.count;++i)
+        draw_box(&s_scene.objects[i]);
 #if defined(BOX3D_GS_KAWASE_DEBUG)
     b3GsKawaseDebugOverlay();
 #endif
