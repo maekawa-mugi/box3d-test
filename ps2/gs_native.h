@@ -5,8 +5,13 @@
 #define B3_PS2_NATIVE_GS_H
 
 #include <stdint.h>
+#if defined(BOX3D_GS_PROGRESSIVE)
+#define B3_PS2_GS_W 640
+#define B3_PS2_GS_H 480
+#else
 #define B3_PS2_GS_W 320
 #define B3_PS2_GS_H 224
+#endif
 
 typedef struct b3GsPoint3 { float x, y, z; } b3GsPoint3;
 typedef struct b3GsCamera {

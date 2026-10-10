@@ -10,6 +10,16 @@
 #include <graph.h>
 #include <gs_gp.h>
 #include <gs_psm.h>
+#if defined(BOX3D_GS_PROGRESSIVE)
+// GS 4 MiB VRAM: two 640x480 PSMCT16 colors (1.17 MiB),
+// Z16 (0.59 MiB), and 640x480 PSMCT32 RAW shadow mask (1.17 MiB).
+// Reserve roughly 1 MiB for future textures/VRAM page padding.
+#define B3_GS_COLOR_PSM GS_PSM_16
+#define B3_GS_DEPTH_PSM GS_ZBUF_16
+#else
+#define B3_GS_COLOR_PSM GS_PSM_32
+#define B3_GS_DEPTH_PSM GS_ZBUF_32
+#endif
 #include <gs_privileged.h>
 #include <kernel.h>
 #include <math.h>
@@ -83,14 +93,14 @@ int b3GsInit(void)
 {
     graph_vram_clear();
     s_framebuffer[0] = graph_vram_allocate(B3_PS2_GS_W, B3_PS2_GS_H,
-                                           GS_PSM_32, GRAPH_ALIGN_PAGE);
+                                           B3_GS_COLOR_PSM, GRAPH_ALIGN_PAGE);
     s_framebuffer[1] = graph_vram_allocate(B3_PS2_GS_W, B3_PS2_GS_H,
-                                           GS_PSM_32, GRAPH_ALIGN_PAGE);
+                                           B3_GS_COLOR_PSM, GRAPH_ALIGN_PAGE);
 #if defined(BOX3D_GS_SOLID)
     // PS2 GS ZBUF_32 is a distinct 8192-byte-page-aligned VRAM buffer.
     // The renderer still uses the two previously proven color buffers.
     s_zbuffer = graph_vram_allocate(B3_PS2_GS_W, B3_PS2_GS_H,
-                                    GS_ZBUF_32, GRAPH_ALIGN_PAGE);
+                                    B3_GS_DEPTH_PSM, GRAPH_ALIGN_PAGE);
     if(s_zbuffer < 0)
     {
         puts("BOX3D_GS_FAIL,zbuffer_allocation");
@@ -135,21 +145,42 @@ int b3GsInit(void)
 
     // graph library is the only video-mode helper. All drawing uses GS
     // registers directly via the packed GIF A+D stream below.
-    graph_initialize(s_framebuffer[0], B3_PS2_GS_W, B3_PS2_GS_H, GS_PSM_32, 0, 0);
-    int region = graph_get_region();
-    if (graph_set_mode(GRAPH_MODE_NONINTERLACED, region, GRAPH_MODE_FIELD,
-                       GRAPH_DISABLE) < 0)
+    graph_initialize(s_framebuffer[0], B3_PS2_GS_W, B3_PS2_GS_H,
+                     B3_GS_COLOR_PSM, 0, 0);
+#if defined(BOX3D_GS_PROGRESSIVE)
+    // HDTV 480p uses a 720x480 active display in 1440 GS clock units.
+    // Crop/center our *real* 640 source pixels to prevent DISPFB from
+    // reading 80 bogus pixels per line outside the framebuffer.
+    int region=GRAPH_MODE_HDTV_480P;
+    if (graph_set_mode(GRAPH_MODE_NONINTERLACED,region,GRAPH_MODE_FRAME,
+                       GRAPH_DISABLE)<0)
+#else
+    int region=graph_get_region();
+    if (graph_set_mode(GRAPH_MODE_NONINTERLACED,region,GRAPH_MODE_FIELD,
+                       GRAPH_DISABLE)<0)
+#endif
     {
         puts("BOX3D_GS_FAIL,crt_mode");
         return 0;
     }
     graph_set_screen(0, 0, B3_PS2_GS_W, B3_PS2_GS_H);
-    graph_set_framebuffer(0, s_framebuffer[0], B3_PS2_GS_W, GS_PSM_32, 0, 0);
-    graph_set_framebuffer(1, s_framebuffer[0], B3_PS2_GS_W, GS_PSM_32, 0, 0);
+#if defined(BOX3D_GS_PROGRESSIVE)
+    // PS2SDK 480P graph_mode: x=232,y=35,width=1440,height=480.
+    // One input pixel spans two GS clock units (MAGH=1). Center
+    // 1280 clocks within 1440: x=232+(1440-1280)/2 = 312.
+    *GS_REG_DISPLAY1=GS_SET_DISPLAY(312,35,1,0,1279,479);
+    *GS_REG_DISPLAY2=GS_SET_DISPLAY(312,35,1,0,1279,479);
+#endif
+    graph_set_framebuffer(0,s_framebuffer[0],B3_PS2_GS_W,B3_GS_COLOR_PSM,0,0);
+    graph_set_framebuffer(1,s_framebuffer[0],B3_PS2_GS_W,B3_GS_COLOR_PSM,0,0);
     graph_enable_output();
     dma_channel_initialize(DMA_CHANNEL_GIF, NULL, 0);
 #if defined(BOX3D_GS_SOLID)
-    printf("BOX3D_GS_READY,native_gif=1,solid=1,zbuf=%d,width=320,height=224,fb=2\n",s_zbuffer);
+    printf("BOX3D_GS_READY,native_gif=1,solid=1,zbuf=%d,width=%d,height=%d,fb=2,psm=%d\n",
+           s_zbuffer,B3_PS2_GS_W,B3_PS2_GS_H,B3_GS_COLOR_PSM);
+#if defined(BOX3D_GS_PROGRESSIVE)
+    puts("BOX3D_GS_VIDEO,480P,640x480,noninterlaced=1,GS_PSM16=1,GS_ZBUF16=1");
+#endif
 #else
     puts("BOX3D_GS_READY,native_gif=1,width=320,height=224,fb=2");
 #endif
@@ -163,12 +194,12 @@ void b3GsBegin(void)
 #if defined(BOX3D_GS_OFFICIAL)
     s_shadowPass = 0;
 #endif
-    b3GsAD(GS_SET_FRAME(s_framebuffer[s_back] >> 11, B3_PS2_GS_W >> 6, GS_PSM_32, 0),
+    b3GsAD(GS_SET_FRAME(s_framebuffer[s_back] >> 11, B3_PS2_GS_W >> 6, B3_GS_COLOR_PSM, 0),
            GS_REG_FRAME_1);
     b3GsAD(GS_SET_XYOFFSET(2048 << 4, 2048 << 4), GS_REG_XYOFFSET_1);
     b3GsAD(GS_SET_SCISSOR(0, B3_PS2_GS_W - 1, 0, B3_PS2_GS_H - 1), GS_REG_SCISSOR_1);
 #if defined(BOX3D_GS_SOLID)
-    b3GsAD(GS_SET_ZBUF(s_zbuffer >> 11, GS_ZBUF_32, 0), GS_REG_ZBUF_1);
+    b3GsAD(GS_SET_ZBUF(s_zbuffer >> 11, B3_GS_DEPTH_PSM, 0), GS_REG_ZBUF_1);
     // ZTE=1 + ZTST=ALLPASS enables depth writes during the sprite clear.
     // The same sprite clears both color and Z to zero at the start of
     // every frame. Geometry subsequently uses GS ZTST=GREATER_EQUAL.
@@ -201,12 +232,12 @@ static void b3GsLineWithDepth(int x0,int y0,uint32_t z0,
     if (s_used + 5 >= B3_GS_QWORDS) { ++s_errors; return; }
     if (x0 < -256) x0 = -256;
     if (x1 < -256) x1 = -256;
-    if (x0 > 576) x0 = 576;
-    if (x1 > 576) x1 = 576;
+    if (x0 > B3_PS2_GS_W+256) x0 = B3_PS2_GS_W+256;
+    if (x1 > B3_PS2_GS_W+256) x1 = B3_PS2_GS_W+256;
     if (y0 < -256) y0 = -256;
     if (y1 < -256) y1 = -256;
-    if (y0 > 480) y0 = 480;
-    if (y1 > 480) y1 = 480;
+    if (y0 > B3_PS2_GS_H+256) y0 = B3_PS2_GS_H+256;
+    if (y1 > B3_PS2_GS_H+256) y1 = B3_PS2_GS_H+256;
     b3GsAD(GS_SET_PRIM(1, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
     b3GsAD(GS_SET_RGBAQ(r, g, b, 0x80, 0x3f800000), GS_REG_RGBAQ);
     b3GsAD(b3GsXYZDepth(x0, y0, z0), GS_REG_XYZ2);
@@ -271,7 +302,12 @@ static int projectDepth(b3GsCamera c,b3GsPoint3 v,int* ox,int* oy,
     // Inverted depth keeps ZTST=GEQUAL; clear remains Z=0. At near=0.5,
     // the largest encoded depth is < 2^32. A 0.045m receiver-normal
     // bias gives a small positive foreground offset.
+#if defined(BOX3D_GS_PROGRESSIVE)
+    // Z16 stores only 16 bits: map near 0.5 to < 65535.
+    *oz=(uint32_t)((1.0f/z - 1.0f/220.0f)*30000.0f);
+#else
     *oz=(uint32_t)((1.0f/z - 1.0f/220.0f)*100000000.0f);
+#endif
 #else
     // Legacy verified wireframe / solid / official variants retain the
     // previous depth mapping, for independent regression comparisons.
@@ -335,8 +371,12 @@ static void b3GsTriangle3Raw(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
     // [0,320]x[0,224]; clamp raster input to an extended safe range.
     if(x0 < -256) x0 = -256; if(x1 < -256) x1 = -256; if(x2 < -256) x2 = -256;
     if(y0 < -256) y0 = -256; if(y1 < -256) y1 = -256; if(y2 < -256) y2 = -256;
-    if(x0 > 576) x0 = 576; if(x1 > 576) x1 = 576; if(x2 > 576) x2 = 576;
-    if(y0 > 480) y0 = 480; if(y1 > 480) y1 = 480; if(y2 > 480) y2 = 480;
+    if(x0 > B3_PS2_GS_W+256) x0 = B3_PS2_GS_W+256;
+    if(x1 > B3_PS2_GS_W+256) x1 = B3_PS2_GS_W+256;
+    if(x2 > B3_PS2_GS_W+256) x2 = B3_PS2_GS_W+256;
+    if(y0 > B3_PS2_GS_H+256) y0 = B3_PS2_GS_H+256;
+    if(y1 > B3_PS2_GS_H+256) y1 = B3_PS2_GS_H+256;
+    if(y2 > B3_PS2_GS_H+256) y2 = B3_PS2_GS_H+256;
 #if defined(BOX3D_GS_OFFICIAL)
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
     // Build an RGB coverage mask, *not* a directly alpha-blended patch.
@@ -449,7 +489,9 @@ void b3GsSkyGradient(void)
 // the two smaller pyramid levels use no depth testing.
 static void b3GsKawaseTarget(int vram,int width,int height)
 {
-    b3GsAD(GS_SET_FRAME(vram>>11,(width+63)>>6,GS_PSM_32,0),
+    int colorPsm=(vram==s_framebuffer[0]||vram==s_framebuffer[1])
+                 ? B3_GS_COLOR_PSM : GS_PSM_32;
+    b3GsAD(GS_SET_FRAME(vram>>11,(width+63)>>6,colorPsm,0),
            GS_REG_FRAME_1);
     b3GsAD(GS_SET_SCISSOR(0,width-1,0,height-1),GS_REG_SCISSOR_1);
     b3GsAD(GS_SET_TEST(0,0,0,0,0,0,0,0),GS_REG_TEST_1);
@@ -555,7 +597,7 @@ void b3GsShadowBegin(void)
     // Preserve scene depth; draw white (128 RGB) coverage where the
     // already-rendered receiver passes ZGREATER. Ground and ramp shadows
     // are thus cropped by the real foreground surface, not just a 2D mask.
-    b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,1),GS_REG_ZBUF_1);
+    b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,B3_GS_DEPTH_PSM,1),GS_REG_ZBUF_1);
     // Clear all RAW texels for every caster: a scissored partial clear
     // left stale pixels for neighboring bilinear taps, creating boxes.
     b3GsKawaseTarget(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H);
@@ -690,7 +732,7 @@ void b3GsShadowEnd(void)
 #endif
     // Restore the depth test before drawing another receiver or the
     // dynamic boxes. The shadow mask itself must not alter scene depth.
-    b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,0),GS_REG_ZBUF_1);
+    b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,B3_GS_DEPTH_PSM,0),GS_REG_ZBUF_1);
     b3GsAD(GS_SET_TEST(0,0,0,0,0,0,1,2),GS_REG_TEST_1);
 }
 
@@ -737,7 +779,7 @@ void b3GsShadowBegin(void)
     // Blend semi-transparent hard-edged shadow geometry onto the ground.
     // Stop writing depth, so overlapped shadows don't block other bodies.
     s_shadowPass=1;
-    b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,1),GS_REG_ZBUF_1);
+    b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,B3_GS_DEPTH_PSM,1),GS_REG_ZBUF_1);
     // These convex silhouettes are clipped to the receiver. Foreground
     // occluders will be drawn AFTER the overlay, avoiding shadow holes.
     b3GsAD(GS_SET_TEST(0,0,0,0,0,0,0,0),GS_REG_TEST_1);
@@ -746,7 +788,7 @@ void b3GsShadowBegin(void)
 void b3GsShadowEnd(void)
 {
     s_shadowPass=0;
-    b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,0),GS_REG_ZBUF_1);
+    b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,B3_GS_DEPTH_PSM,0),GS_REG_ZBUF_1);
     b3GsAD(GS_SET_TEST(0,0,0,0,0,0,1,2),GS_REG_TEST_1);
 }
 #endif
@@ -867,7 +909,7 @@ void b3GsPresent(void)
     dma_channel_wait(DMA_CHANNEL_GIF, 0);
     while (((*GS_REG_CSR) & (uint64_t)2) == 0) {}
     graph_wait_vsync();
-    graph_set_framebuffer(0,s_framebuffer[s_back],B3_PS2_GS_W,GS_PSM_32,0,0);
-    graph_set_framebuffer(1,s_framebuffer[s_back],B3_PS2_GS_W,GS_PSM_32,0,0);
+    graph_set_framebuffer(0,s_framebuffer[s_back],B3_PS2_GS_W,B3_GS_COLOR_PSM,0,0);
+    graph_set_framebuffer(1,s_framebuffer[s_back],B3_PS2_GS_W,B3_GS_COLOR_PSM,0,0);
     s_back ^= 1;
 }
