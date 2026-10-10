@@ -286,16 +286,22 @@ for symbol in main b3World_Step b3GsShadowBegin b3GsPresent b3GsTriangle3 b3Shad
 done
 printf 'PS2 SAMPLE pcf_4tap OK: %s\n' "$PCF_4TAP_OUT"
 
+# The progressive scene viewer uses the original Box3D Human ragdoll.
+# PS2SDK libpad + IOP module loader enable immediate left/right changes.
+# Link human.c/utils.c ONLY into progressive samples; legacy 320 builds
+# retain exactly their existing scene behavior and link dependencies.
 # Native GS sample variant: pcf_progressive.
 PCF_PROGRESSIVE_OUT=${PCF_PROGRESSIVE_OUT:-$ROOT/ps2/box3d_ps2_samples_pcf_progressive.elf}
 "$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
     -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 -DBOX3D_GS_RECEIVER_SHADOWS=1 -DBOX3D_GS_KAWASE_SHADOWS=1 -DBOX3D_GS_PCF_SHADOWS=1 -DBOX3D_GS_PCF_4TAP=1 -DBOX3D_GS_PROGRESSIVE=1 \
+    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 -DBOX3D_GS_RECEIVER_SHADOWS=1 -DBOX3D_GS_KAWASE_SHADOWS=1 -DBOX3D_GS_PCF_SHADOWS=1 -DBOX3D_GS_PCF_4TAP=1 -DBOX3D_GS_PROGRESSIVE=1 -DBOX3D_PS2_PAD_NAV=1 \
     -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
     -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
+    -I"$PS2SDK/ee/rpc/pad/include" \
     "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
-    "$ROOT/ps2/shadow_project.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel \
+    "$ROOT/ps2/shadow_project.c" \
+    "$ROOT/shared/human.c" "$ROOT/shared/utils.c" "$LIB" \
+    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lloadfile -lsifrpc -lm -lkernel \
     -o "$PCF_PROGRESSIVE_OUT"
 "$READELF" -h "$PCF_PROGRESSIVE_OUT" | grep -q 'Machine:.*MIPS' ||
     die "pcf_progressive is not a MIPS ELF"
@@ -306,6 +312,54 @@ for symbol in main b3World_Step b3GsShadowBegin b3GsPresent b3GsTriangle3 b3Shad
         die "pcf_progressive missing linked symbol: $symbol"
 done
 printf 'PS2 SAMPLE pcf_progressive OK: %s\n' "$PCF_PROGRESSIVE_OUT"
+
+# Expanded down/up Kawase pyramid, all GS-native in disjoint VRAM.
+KAWASE_WIDE_OUT=${KAWASE_WIDE_OUT:-$ROOT/ps2/box3d_ps2_samples_kawase_wide.elf}
+"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
+    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
+    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 -DBOX3D_GS_RECEIVER_SHADOWS=1 -DBOX3D_GS_KAWASE_SHADOWS=1 -DBOX3D_GS_KAWASE_WIDE=1 -DBOX3D_PS2_PAD_NAV=1 \
+    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
+    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
+    -I"$PS2SDK/ee/rpc/pad/include" \
+    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
+    "$ROOT/ps2/shadow_project.c" \
+    "$LIB" \
+    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lloadfile -lsifrpc -lm -lkernel \
+    -o "$KAWASE_WIDE_OUT"
+"$READELF" -h "$KAWASE_WIDE_OUT" | grep -q 'Machine:.*MIPS' ||
+    die "kawase_wide is not a MIPS ELF"
+"$READELF" -h "$KAWASE_WIDE_OUT" | grep -q 'Type:.*EXEC' ||
+    die "kawase_wide is not an executable MIPS ELF"
+for symbol in main b3World_Step b3GsShadowEnd b3GsPresent padRead; do
+    "$NM" --defined-only "$KAWASE_WIDE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
+        die "kawase_wide missing linked symbol: $symbol"
+done
+printf 'PS2 GS WIDE KAWASE kawase_wide OK: %s\n' "$KAWASE_WIDE_OUT"
+
+# Expanded down/up Kawase pyramid, all GS-native in disjoint VRAM.
+KAWASE_WIDE_PROGRESSIVE_OUT=${KAWASE_WIDE_PROGRESSIVE_OUT:-$ROOT/ps2/box3d_ps2_samples_kawase_wide_progressive.elf}
+"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
+    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
+    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 -DBOX3D_GS_RECEIVER_SHADOWS=1 -DBOX3D_GS_KAWASE_SHADOWS=1 -DBOX3D_GS_KAWASE_WIDE=1 -DBOX3D_PS2_PAD_NAV=1 -DBOX3D_GS_PROGRESSIVE=1 \
+    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
+    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
+    -I"$PS2SDK/ee/rpc/pad/include" \
+    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
+    "$ROOT/ps2/shadow_project.c" \
+    "$ROOT/shared/human.c" "$ROOT/shared/utils.c" \
+    "$LIB" \
+    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lloadfile -lsifrpc -lm -lkernel \
+    -o "$KAWASE_WIDE_PROGRESSIVE_OUT"
+"$READELF" -h "$KAWASE_WIDE_PROGRESSIVE_OUT" | grep -q 'Machine:.*MIPS' ||
+    die "kawase_wide_progressive is not a MIPS ELF"
+"$READELF" -h "$KAWASE_WIDE_PROGRESSIVE_OUT" | grep -q 'Type:.*EXEC' ||
+    die "kawase_wide_progressive is not an executable MIPS ELF"
+for symbol in main b3World_Step b3GsShadowEnd b3GsPresent padRead; do
+    "$NM" --defined-only "$KAWASE_WIDE_PROGRESSIVE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
+        die "kawase_wide_progressive missing linked symbol: $symbol"
+done
+"$NM" --defined-only "$KAWASE_WIDE_PROGRESSIVE_OUT" | grep -Eq " [Tt] CreateHuman$" || die "kawase_wide_progressive is missing human ragdoll"
+printf 'PS2 GS WIDE KAWASE kawase_wide_progressive OK: %s\n' "$KAWASE_WIDE_PROGRESSIVE_OUT"
 
 printf 'PS2 BUILD OK: %s\n' "$OUT"
 printf 'PS2 BENCH BUILD OK: %s\n' "$BENCH_OUT"
