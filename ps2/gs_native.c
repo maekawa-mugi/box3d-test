@@ -3,6 +3,7 @@
 // PS2SDK graph manages the CRT/read circuit only. No draw, no gsKit.
 #include "gs_native.h"
 #if defined(BOX3D_PS2_UNIFIED)
+#include "pcss_filter_tiers.h"
 #include "ee_clock.h"
 #endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
@@ -76,6 +77,7 @@ static int s_shadowMask;
 // within the existing 4 MiB GS VRAM. Pre-filter distant PCSS silhouettes
 // here before the separable 3x3 final convolution.
 static int s_pcssPrefilter;
+static int s_pcssQuarterFilter;
 #endif
 static int s_halfMask[2];
 static int s_quarterMask[2];
@@ -188,7 +190,15 @@ int b3GsInit(void)
         puts("BOX3D_GS_FAIL,pcss_prefilter_vram");
         return 0;
     }
-    puts("BOX3D_GS_PCSS_PREFILTER,320x240,psmct32,327680bytes");
+    s_pcssQuarterFilter=b3GsAllocatePageSurface(B3_KAWASE_QUARTER_W,
+                                                  B3_KAWASE_QUARTER_H,
+                                                  GS_PSM_32);
+    if(s_pcssQuarterFilter<0)
+    {
+        puts("BOX3D_GS_FAIL,pcss_quarter_prefilter_vram");
+        return 0;
+    }
+    puts("BOX3D_GS_PCSS_PREFILTER,half=320x240,quarter=160x120,disjoint=1");
 #endif
 #else
     for(int i=0;i<2;++i)
@@ -834,16 +844,36 @@ void b3GsShadowEnd(void)
     // silhouettes are first filtered by native GS 2:1 downsampling.
     // This removes isolated jagged mask texels before radius sampling.
 #if defined(BOX3D_PS2_UNIFIED)
-    if(s_pcssRadius>1)
+    int pcssTier=b3Ps2PcssDownsampleLevel(s_pcssRadius);
+    if(pcssTier>=1)
     {
+        // Connected filter footprint: full 640x480 -> half 320x240.
+        // The 4-bit GS bilinear interpolation, not widely separated
+        // subtractive shadow copies, produces the near penumbra.
         b3GsKawaseTarget(s_pcssPrefilter,B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
         b3GsKawaseClear(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
         b3GsKawaseSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H,0,0);
         b3GsAD(GS_SET_ALPHA(0,2,2,1,128),GS_REG_ALPHA_1);
         b3GsKawaseBlit(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
                        B3_PS2_GS_W,B3_PS2_GS_H,0,0);
-        b3GsShadowCompositeSource(s_pcssPrefilter,
-                                  B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
+        if(pcssTier>=2)
+        {
+            // Far casters: another real 2:1 GS bilinear downsample.
+            // Disjoint PSMCT32 buffers, no extra rendering mode/ELF.
+            b3GsKawaseTarget(s_pcssQuarterFilter,
+                             B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H);
+            b3GsKawaseClear(B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H);
+            b3GsKawaseSource(s_pcssPrefilter,
+                             B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,0,0);
+            b3GsAD(GS_SET_ALPHA(0,2,2,1,128),GS_REG_ALPHA_1);
+            b3GsKawaseBlit(B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H,
+                           B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,0,0);
+            b3GsShadowCompositeSource(s_pcssQuarterFilter,
+                                      B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H);
+        }
+        else
+            b3GsShadowCompositeSource(s_pcssPrefilter,
+                                      B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
     }
     else
 #endif
@@ -869,24 +899,25 @@ void b3GsShadowEnd(void)
     else
     {
 #if defined(BOX3D_PS2_UNIFIED)
-        // The 2:1 bilinear prefilter removes raw binary-edge ringing.
-        // Center-weighted 3x3 convolution is continuous (no 4-lobe
-        // sparse filter) and requires 9 taps instead of 21. The radius
-        // controls the output-space spread in pixel units. A single
-        // texel in the half source covers 2x2 output pixels.
-        int spread=s_pcssRadius-1;
+        // Compact 3x3 separable tent, always +/-1 screen pixel.
+        // Larger distance blur comes from half/quarter bilinear levels,
+        // NEVER four displaced hard copies of the same silhouette.
+        const int tapWidth=pcssTier==2?
+                           B3_KAWASE_QUARTER_W:B3_KAWASE_HALF_W;
+        const int tapHeight=pcssTier==2?
+                            B3_KAWASE_QUARTER_H:B3_KAWASE_HALF_H;
+        const int shift=b3Ps2PcssFinalShift(s_pcssRadius);
         for(int iy=-1;iy<=1;++iy)
         for(int ix=-1;ix<=1;++ix)
         {
             int fix=(ix==0&&iy==0)?24:
                     ((ix==0||iy==0)?12:6);
-            int dx=ix*spread,dy=iy*spread;
+            int dx=ix*shift,dy=iy*shift;
             if(s_pcssMajorX)
                 dy=b3Ps2ShadowCompressMinor(dy);
             else
                 dx=b3Ps2ShadowCompressMinor(dx);
-            b3GsShadowCompositeTap(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
-                                   dx,dy,fix);
+            b3GsShadowCompositeTap(tapWidth,tapHeight,dx,dy,fix);
         }
 #else
         for(int iy=-2;iy<=2;++iy)

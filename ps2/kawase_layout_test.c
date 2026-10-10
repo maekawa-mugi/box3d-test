@@ -49,9 +49,11 @@ int main(void)
     assert(pageSize(320,240,32)==327680u);
     assert(pageSize(80,60,32)==32768u);
     // Unified 480p PCSS: 2x color16, Z16, full RAW32 and one half RAW32.
+    // Unified 480p PCSS also reserves one 160x120 quarter prefilter.
+    assert(pageSize(160,120,32)==98304u);
     assert(3u*pageSize(640,480,16)+pageSize(640,480,32)+
-           pageSize(320,240,32)==3522560u);
-    assert(4194304u-3522560u==671744u);
+           pageSize(320,240,32)+pageSize(160,120,32)==3620864u);
+    assert(4194304u-3620864u==573440u);
     assert(layout(320,224,0)==1425408u);
     assert(layout(640,480,1)==4112384u);
     assert(4194304u-layout(640,480,1)==81920u);
