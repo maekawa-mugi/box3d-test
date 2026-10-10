@@ -15,8 +15,7 @@
 
 typedef struct B3GsQword { uint64_t data, reg; } B3GsQword;
 #if defined(BOX3D_GS_RECEIVER_SHADOWS)
-// The full 40-box official stack plus clipped multi-receiver silhouettes
-// can exceed the old 8192-qword packet. Keep the entire frame visible.
+// Large packets also hold GPU-only multi-stage Kawase texture passes.
 #define B3_GS_QWORDS 16384
 #elif defined(BOX3D_GS_OFFICIAL)
 #define B3_GS_QWORDS 8192
@@ -33,6 +32,15 @@ static int s_zbuffer;
 static int s_errors;
 #if defined(BOX3D_GS_OFFICIAL)
 static int s_shadowPass;
+#endif
+#if defined(BOX3D_GS_KAWASE_SHADOWS)
+#define B3_KAWASE_HALF_W 160
+#define B3_KAWASE_HALF_H 112
+#define B3_KAWASE_QUARTER_W 80
+#define B3_KAWASE_QUARTER_H 56
+static int s_shadowMask;
+static int s_halfMask[2];
+static int s_quarterMask[2];
 #endif
 
 // Coordinates are signed screen pixels. We use XYOFFSET=2048.0 pixels
@@ -76,6 +84,25 @@ int b3GsInit(void)
     if(s_zbuffer < 0)
     {
         puts("BOX3D_GS_FAIL,zbuffer_allocation");
+        return 0;
+    }
+#endif
+#if defined(BOX3D_GS_KAWASE_SHADOWS)
+    // RGB mask/blur pages: no CPU round trips and no texture upload.
+    // Scratch is disjoint from both color buffers and the depth buffer.
+    s_shadowMask=graph_vram_allocate(B3_PS2_GS_W,B3_PS2_GS_H,
+                                     GS_PSM_32,GRAPH_ALIGN_PAGE);
+    for(int i=0;i<2;++i)
+    {
+        s_halfMask[i]=graph_vram_allocate(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
+                                         GS_PSM_32,GRAPH_ALIGN_PAGE);
+        s_quarterMask[i]=graph_vram_allocate(B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H,
+                                            GS_PSM_32,GRAPH_ALIGN_PAGE);
+    }
+    if(s_shadowMask<0 || s_halfMask[0]<0 || s_halfMask[1]<0 ||
+       s_quarterMask[0]<0 || s_quarterMask[1]<0)
+    {
+        puts("BOX3D_GS_FAIL,kawase_vram_allocation");
         return 0;
     }
 #endif
@@ -270,8 +297,20 @@ static void b3GsTriangle3Raw(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
     if(x0 > 576) x0 = 576; if(x1 > 576) x1 = 576; if(x2 > 576) x2 = 576;
     if(y0 > 480) y0 = 480; if(y1 > 480) y1 = 480; if(y2 > 480) y2 = 480;
 #if defined(BOX3D_GS_OFFICIAL)
+#if defined(BOX3D_GS_KAWASE_SHADOWS)
+    // Build an RGB coverage mask, *not* a directly alpha-blended patch.
+    // GS does not blend destination alpha alongside RGB, so the blur
+    // stores shadow strength in the color channels for later subtraction.
+    b3GsAD(GS_SET_PRIM(3,0,0,0,0,0,0,0,0),GS_REG_PRIM);
+    if(s_shadowPass)
+        b3GsAD(GS_SET_RGBAQ(128,128,128,0x80,0x3f800000),GS_REG_RGBAQ);
+    else
+        b3GsAD(GS_SET_RGBAQ(r,g,blue,0x80,0x3f800000),GS_REG_RGBAQ);
+#else
     b3GsAD(GS_SET_PRIM(3, 0, 0, 0, s_shadowPass ? 1 : 0, 0, 0, 0, 0), GS_REG_PRIM);
     b3GsAD(GS_SET_RGBAQ(r,g,blue,s_shadowPass ? 0x50 : 0x80,0x3f800000),GS_REG_RGBAQ);
+#endif
+#endif
 #else
     b3GsAD(GS_SET_PRIM(3, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
     b3GsAD(GS_SET_RGBAQ(r,g,blue,0x80,0x3f800000),GS_REG_RGBAQ);
