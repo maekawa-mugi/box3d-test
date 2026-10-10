@@ -98,12 +98,14 @@ static int s_simSubsteps=4;
 static int s_vu0Mode=0;
 static int s_shadowVisualMode=0; // 0=PCSS,1=PCF,2=HARD,3=OFF,4=LEGACY
 static int s_vu1Ready;
-// Default to proven EE geometry after a reported VU1 black-screen hang.
-// TRIANGLE stages: EE -> ACK -> PATH3 -> VIF UNPACK -> BOOT ARM
-// -> one-shot MSCAL stub -> VU1 transform -> XGKICK. BOOT ARM does
-// not execute VU code: the operator can open the PCSX2 console first.
+// No VU1 initialization at program startup: keep the proven EE path
+// usable even if MPG/MMIO verification fails on the target emulator.
+// TRIANGLE stages: EE -> ACK -> PATH3 -> INIT ARM -> INIT ->
+// VIF UNPACK -> BOOT -> VUONLY -> 1/8/400 VU1 boxes.
 static int s_vu1Budget=0;
 static unsigned s_trianglePressCount;
+static int s_vu1InitAttempted;
+static int s_vu1VifAttempted;
 static int s_vu1BootAttempted;
 static int s_lastVu1Boxes;
 #endif
@@ -160,13 +162,16 @@ static int pad_nav_poll(void)
     {
         s_vu1Budget=(s_vu1Budget==0)?-2:
                     (s_vu1Budget==-2)?-3:
-                    (s_vu1Budget==-3)?-4:
-                    (s_vu1Budget==-4)?-6:
-                    (s_vu1Budget==-6)?-5:
+                    (s_vu1Budget==-3)?-6:
+                    (s_vu1Budget==-6)?-7:
+                    (s_vu1Budget==-7)?-4:
+                    (s_vu1Budget==-4)?-5:
                     (s_vu1Budget==-5)?-1:
                     (s_vu1Budget==-1)?1:
                     (s_vu1Budget==1)?8:
                     (s_vu1Budget==8)?B3_VU1_MAX_BOXES:0;
+        if(s_vu1Budget==-7)s_vu1InitAttempted=0;
+        if(s_vu1Budget==-4)s_vu1VifAttempted=0;
         if(s_vu1Budget==-5)s_vu1BootAttempted=0;
         ++s_trianglePressCount;
         printf("BOX3D_PAD_TRIANGLE,press=%u,stage=%d,ready=%d,status=%s,scene=%d\n",
@@ -1303,8 +1308,8 @@ static void render_official_hud(void)
     // controller interactions as "VU1 EE SAFE".
     const int vuMode=s_vu1Budget;
     static const char* const vuStageLabel[]={
-        "VU1 ACK","VU1 PATH3","VU1 VIF","VU1 BOOT ARM",
-        "VU1 BOOT","VU1 VUONLY"
+        "VU1 ACK","VU1 PATH3","VU1 VIF","VU1 INIT ARM",
+        "VU1 BOOT","VU1 VUONLY","VU1 INIT"
     };
     if(vuMode<0)
         snprintf(page,sizeof(page),"PAGE %d/%d PCSS S%d TEST",
@@ -1339,7 +1344,7 @@ static void render_official_hud(void)
     // visible in the EE-only first diagnostic stage, even if a later
     // VIF1 stage deadlocks before the next Present().
     b3GsOverlayPanel(374,14,252,132);
-    b3GsOverlayText(390,26,"TRIANGLE VU1R3",255,233,116);
+    b3GsOverlayText(390,26,"TRIANGLE VU1R4",255,233,116);
     char padInfo[40];
     snprintf(padInfo,sizeof(padInfo),"PRESS %u",
              s_trianglePressCount);
@@ -1348,6 +1353,7 @@ static void render_official_hud(void)
     else if(vuMode==-3)b3GsOverlayText(390,82,vuStageLabel[1],255,238,132);
     else if(vuMode==-4)b3GsOverlayText(390,82,vuStageLabel[2],255,238,132);
     else if(vuMode==-6)b3GsOverlayText(390,82,vuStageLabel[3],255,238,132);
+    else if(vuMode==-7)b3GsOverlayText(390,82,vuStageLabel[6],255,238,132);
     else if(vuMode==-5)b3GsOverlayText(390,82,vuStageLabel[4],255,238,132);
     else if(vuMode==-1)b3GsOverlayText(390,82,vuStageLabel[5],255,238,132);
     else if(vuMode>0)
@@ -1552,32 +1558,44 @@ static void render(void)
             draw_box(&s_scene.objects[i]);
     }
 #if defined(BOX3D_PS2_UNIFIED)
-    // Isolate the PATH3 finishing barrier from VIF1 UNPACK and MSCAL.
-    // These two stages send no VU1 geometry and keep EE boxes visible.
-    if(s_scene.kind>=8 && s_vu1Ready &&
-       (s_vu1Budget==-3 || s_vu1Budget==-4 ||
-        s_vu1Budget==-5))
+    // The first four steps separate ordinary EE drawing, PATH3,
+    // explicit intent to initialize VU1, and the initialization itself.
+    // Critical: VU1 MPG/MMIO reads are NEVER executed on program boot.
+    if(s_scene.kind>=8 && s_vu1Budget==-7 && !s_vu1InitAttempted)
     {
-        if(s_vu1Budget==-5 && s_vu1BootAttempted)
+        s_vu1InitAttempted=1;
+        puts("BOX3D_VU1_PHASE,lazy_init_begin");
+        s_vu1Ready=b3Vu1BoxesInit();
+        printf("BOX3D_VU1_PHASE,lazy_init_end,ready=%d,status=%s\n",
+               s_vu1Ready,b3Vu1BoxesStatus());
+    }
+    // PATH3 is testable even if VU1 has never initialized.
+    if(s_scene.kind>=8 && s_vu1Budget==-3)
+        b3GsFlushForVu1();
+    // After successful init, test the VIF upload and MSCAL separately.
+    if(s_scene.kind>=8 && s_vu1Ready &&
+       ((s_vu1Budget==-4 && !s_vu1VifAttempted) ||
+        (s_vu1Budget==-5 && !s_vu1BootAttempted)))
+    {
+        if(b3GsFlushForVu1())
         {
-            // Only issue an actual VU1 MSCAL ONCE, never per frame.
-            // The next frame is EE-only, avoiding repeated boot DMA.
-        }
-        else if(b3GsFlushForVu1())
-        {
-            if(s_vu1Budget==-4 && !b3Vu1BoxesUploadTest(s_scene.camera))
+            if(s_vu1Budget==-4)
             {
-                puts("BOX3D_VU1_DISABLED,vif_only_failed");
-                s_vu1Budget=0;
+                s_vu1VifAttempted=1;
+                if(!b3Vu1BoxesUploadTest(s_scene.camera))
+                {
+                    puts("BOX3D_VU1_DISABLED,vif_only_failed");
+                    s_vu1Ready=0;
+                }
             }
-            if(s_vu1Budget==-5)
+            else
             {
                 s_vu1BootAttempted=1;
                 puts("BOX3D_VU1_BOOT,one_shot=1,phase=before_test");
                 if(!b3Vu1BoxesBootTest())
                 {
                     puts("BOX3D_VU1_DISABLED,boot_mscal_failed");
-                    s_vu1Budget=0;
+                    s_vu1Ready=0;
                 }
             }
         }
@@ -1620,7 +1638,7 @@ int main(void)
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
 #if defined(BOX3D_PS2_UNIFIED)
-    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off_legacy,TRIANGLE=vu1_ee_ack_path3_vif_boot_arm_boot_vu_1_8_all");
+    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off_legacy,TRIANGLE=vu1_ee_ack_path3_init_arm_init_vif_boot_vu_1_8_all");
 #endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
@@ -1647,11 +1665,11 @@ int main(void)
         for(;;) SleepThread();
     }
 #if defined(BOX3D_PS2_UNIFIED)
-    s_vu1Ready=b3Vu1BoxesInit();
-    printf("BOX3D_VU1_STARTUP,ready=%d,status=%s\n",
-           s_vu1Ready,b3Vu1BoxesStatus());
-    if(!s_vu1Ready)puts("BOX3D_VU1_FALLBACK,reason=init");
-    puts("BOX3D_VU1_SAFE_DEFAULT,ee_geometry=1,triangle=ack_path3_vif_arm_boot_vu_kick");
+    // Do not initialize VIF1, upload MPG, or touch VU1 microcode
+    // until the user enters the explicit INIT diagnostic stage.
+    s_vu1Ready=0;
+    puts("BOX3D_VU1_STARTUP,lazy=1,ready=0,ee_safe=1");
+    puts("BOX3D_VU1_SAFE_DEFAULT,ee_geometry=1,triangle=ack_path3_init_arm_init_vif_boot");
 #endif
 #if defined(BOX3D_PS2_PAD_NAV)
     pad_nav_init();

@@ -164,40 +164,19 @@ int b3Vu1BoxesInit(void)
     {
         if(vuCode[i]!=image[i]) {mismatch=i;break;}
     }
-    int cpuRecovered=0;
     if(mismatch!=instructionWords)
     {
-        printf("BOX3D_VU1_MPG_MISMATCH,word=%u,want=%08x,got=%08x,vif_code=%08x,vif_stat=%08x,vif_err=%08x\n",
+        printf("BOX3D_VU1_FAIL,mpg_readback,word=%u,want=%08x,got=%08x,vif_code=%08x,vif_stat=%08x,vif_err=%08x\n",
                mismatch,(unsigned)image[mismatch],(unsigned)vuCode[mismatch],
                (unsigned)VIF1_CODE,(unsigned)VIF1_STAT,
                (unsigned)VIF1_ERR);
-        // VU1 micro RAM is also EE memory mapped. If the official
-        // VIF MPG path did not populate it, recover the CODE upload
-        // through its MMIO window. VIF1 still handles all vertex
-        // uploads and VU1 still executes the program. This is safe
-        // only when the VIF queue is idle, as checked above.
-        volatile u32* writable=(volatile u32*)B3_VU1_EE_MICRO_BASE;
-        for(unsigned i=0;i<instructionWords;++i)
-            writable[i]=image[i];
-        EE_SYNCL();
-        mismatch=instructionWords;
-        for(unsigned i=0;i<instructionWords;++i)
-        {
-            if(vuCode[i]!=image[i]) {mismatch=i;break;}
-        }
-        if(mismatch!=instructionWords)
-        {
-            printf("BOX3D_VU1_FAIL,mpg_readback,word=%u,want=%08x,got=%08x\n",
-                   mismatch,(unsigned)image[mismatch],
-                   (unsigned)vuCode[mismatch]);
-            s_status="VU1 FAIL READBACK";
-            return 0;
-        }
-        cpuRecovered=1;
-        puts("BOX3D_VU1_IMAGE,cpu_microcode_recovery=ok");
+        // Safety: never write the EE-mapped VU1 microcode window while
+        // diagnosing a startup reset. The VIF1 MPG upload must verify
+        // byte-for-byte before any MSCAL instruction can run.
+        s_status="VU1 FAIL READBACK";
+        return 0;
     }
-    else
-        puts("BOX3D_VU1_IMAGE,mpg_dma_readback=ok");
+    puts("BOX3D_VU1_IMAGE,mpg_dma_readback=ok");
     puts("BOX3D_VU1_IMAGE,readback=ok");
 
     int k=0;
@@ -232,9 +211,8 @@ int b3Vu1BoxesInit(void)
         return 0;
     }
     s_ready=1;
-    s_status=cpuRecovered?"VU1 READY CPU":"VU1 READY DMA";
-    printf("BOX3D_VU1_READY,vif1_dma=1,vu1_micro=1,xgkick=1,triangles_per_box=12,micro_cpu_fallback=%d\n",
-           cpuRecovered);
+    s_status="VU1 READY DMA";
+    puts("BOX3D_VU1_READY,vif1_dma=1,vu1_micro=1,xgkick=1,triangles_per_box=12,micro_cpu_fallback=disabled");
     return 1;
 }
 

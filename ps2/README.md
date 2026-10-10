@@ -687,3 +687,51 @@ D0 as the default and validate BOOT ARM before BOOT.
 References:
 - https://github.com/PCSX2/pcsx2/blob/master/pcsx2/Memory.cpp#L393-L403
 - https://github.com/glampert/quake2-ps2/blob/main/src/ps2/debug/pipeline_dump.cpp#L25-L28
+
+## 2026-10-10: PCSX2 resets to BIOS immediately after executing the new ELF
+
+The PCSX2 log now shows the correct `host:box3d_ps2.elf` ELF,
+entrypoint `0x00102848`, and `ELF ... is executing` at 3.0439s.
+PCSX2 reports `# Restart.` at 3.0849s and then boots
+`rom0:OSDSYS`. Thus the ELF **was loaded**; this is an
+early EE/PS2 reset, not a missing ELF or a confirmed `main return 1`.
+The specific faulting instruction is still unknown.
+
+The previous build called `b3Vu1BoxesInit()` at program startup,
+before pad/scene creation. That initializes VIF1, sends MPG, reads
+EE-mapped VU1 instruction memory, and previously attempted CPU MMIO
+recovery. A regression in that path can prevent the entire demo from
+starting, even though the default geometry mode is EE-only.
+
+The demo **no longer touches VIF1 or VU1 during program startup**.
+Only the ordinary GS/EE demo initializes. This restores a safe path
+for displaying stress scenes and measuring PCSS/physics independently
+of VU1. The risky CPU-assisted microcode rewrite has also been
+removed. The microcode upload must compare correctly through VIF1
+MPG before enabling BOOT or VU-only rendering.
+
+On any BENCH scene, TRIANGLE selects:
+
+| Press | HUD stage | Effect |
+| --- | --- | --- |
+| 0 | VU1 EE SAFE | Startup, no VIF1/VU1 initialization |
+| 1 | VU1 ACK | Confirm controller only |
+| 2 | VU1 PATH3 | Isolated GS PATH3 completion |
+| 3 | VU1 INIT ARM | Confirm before any VIF/VU1 work |
+| 4 | VU1 INIT | One-shot initialize VIF1 and upload/verify MPG |
+| 5 | VU1 VIF | One-shot camera UNPACK |
+| 6 | VU1 BOOT | One-shot minimal MSCAL/FLUSHE |
+| 7 | VU1 VUONLY | Full transform with no XGKICK |
+| 8 | VU1 BOX 1 | Send one box with XGKICK |
+
+The upper-right HUD identifies this recovery version as
+`TRIANGLE VU1R4`, and displays `VU1 NOT INIT` at startup.
+**First test only that the new ELF launches and shows the EE boxes.
+Do not advance to VU1 INIT before verifying ordinary pages.**
+Once normal rendering is confirmed, testing INIT separately can locate
+the exact code path that requests a BIOS reset. If the startup reset
+persists without pressing TRIANGLE, the fault predates VU1
+initialization and requires a different investigation.
+
+Rebuild `sh ps2/build_ee.sh` from a freshly updated branch and boot
+the freshly generated `ps2/box3d_ps2.elf` in PCSX2.
