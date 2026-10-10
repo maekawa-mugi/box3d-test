@@ -487,9 +487,14 @@ void b3GsShadowEnd(void)
     b3GsKawasePass(s_quarterMask[0],B3_KAWASE_QUARTER_W,
                    B3_KAWASE_QUARTER_H,s_halfMask[0],
                    B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,8,7,1);
+    // Intermediate quarter-resolution ping-pong sharpens control of
+    // the effective blur radius with only a few 80x56 sprite passes.
+    b3GsKawasePass(s_quarterMask[1],B3_KAWASE_QUARTER_W,
+                   B3_KAWASE_QUARTER_H,s_quarterMask[0],
+                   B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H,7,6,1);
     // Upsample/Kawase blur: quarter -> half, separate VRAM page.
     b3GsKawasePass(s_halfMask[1],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
-                   s_quarterMask[0],B3_KAWASE_QUARTER_W,
+                   s_quarterMask[1],B3_KAWASE_QUARTER_W,
                    B3_KAWASE_QUARTER_H,7,6,2);
     // Optional refinement ping-pong at half resolution.
     b3GsKawasePass(s_halfMask[0],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,

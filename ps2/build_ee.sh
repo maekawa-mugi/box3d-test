@@ -187,12 +187,9 @@ SOFT_SHADOW_OUT=${SOFT_SHADOW_OUT:-$ROOT/ps2/box3d_ps2_samples_softshadows.elf}
     die "Soft shadow sample is not a MIPS ELF"
 "$READELF" -h "$SOFT_SHADOW_OUT" | grep -q 'Type:.*EXEC' ||
     die "Soft shadow sample is not executable ELF"
-for symbol in main b3World_Step b3GsKawaseSource b3GsTriangle3 b3GsPresent b3ShadowProjectBox; do
-    # Kawase pipeline helpers are deliberately static and may be inlined.
-    if [ "$symbol" != "b3GsKawaseSource" ]; then
-        "$NM" --defined-only "$SOFT_SHADOW_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-            die "Soft shadow sample missing: $symbol"
-    fi
+for symbol in main b3World_Step b3GsShadowBegin b3GsShadowEnd b3GsTriangle3 b3GsPresent b3ShadowProjectBox; do
+    "$NM" --defined-only "$SOFT_SHADOW_OUT" | grep -Eq " [Tt] ${symbol}$" ||
+        die "Soft shadow sample missing: $symbol"
 done
 
 printf 'PS2 BUILD OK: %s\n' "$OUT"
