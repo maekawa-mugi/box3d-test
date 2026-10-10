@@ -113,7 +113,12 @@ int main( void )
     printf( "BOX3D_RESULT,early_y=%.4f,landed_y=%.4f,settled_y=%.4f\n",
             earlyY, landedY, settledY );
 #if defined( BOX3D_PS2 )
-    scr_printf( "Y: early %.4f, landed %.4f, settled %.4f\n", earlyY, landedY, settledY );
+    // PS2SDK's scr_printf may not implement float formatting; preformat with
+    // newlib and pass only a literal "%s" to the GS debug renderer.
+    char resultLine[160];
+    snprintf( resultLine, sizeof( resultLine ),
+              "Y: early %.4f, landed %.4f, settled %.4f", earlyY, landedY, settledY );
+    scr_printf( "%s\n", resultLine );
 #endif
 
     b3DestroyWorld( worldId );

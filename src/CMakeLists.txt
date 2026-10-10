@@ -125,7 +125,8 @@ add_library(box3d ${BOX3D_SOURCE_FILES} ${BOX3D_INCLUDE_FILES})
 
 if(BOX3D_PS2)
     # Public so applications including Box3D headers use identical target settings.
-    target_compile_definitions(box3d PUBLIC BOX3D_PS2=1)
+    # Preserve useful GS assertion diagnostics even in Release builds.
+    target_compile_definitions(box3d PUBLIC BOX3D_PS2=1 B3_ENABLE_ASSERT=1)
 endif()
 
 # target_link_libraries(box3d PRIVATE eastl)

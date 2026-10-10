@@ -16,7 +16,7 @@ BUILD=${BUILD:-$ROOT/build/ps2-ee}
 
 die() { printf 'PS2 BUILD ERROR: %s\n' "$*" >&2; exit 1; }
 
-for tool in "$CC" "$NM" "$READELF" "$CMAKE"; do
+for tool in "$CC" "$NM" "$READELF" "$CMAKE" ninja; do
     command -v "$tool" >/dev/null 2>&1 || die "Missing executable: $tool"
 done
 case "$("$CC" -dumpmachine)" in
@@ -40,7 +40,7 @@ LIB="$BUILD/src/libbox3d.a"
 # Known working standalone EE pattern from ps2-libc-arena; link after objects.
 # CMake supplies the same -march/-G0/-fno-delayed-branch baseline to Box3D.
 "$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 \
+    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
     -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
     "$ROOT/ps2/smoke.c" "$LIB" \
     -L"$PS2SDK/ee/lib" -lm -ldebug -lkernel -o "$OUT"
