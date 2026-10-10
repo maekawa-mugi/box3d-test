@@ -27,6 +27,14 @@ static inline int b3Ps2ShadowWeight5(int x,int y)
     return (96*c[x+2]*c[y+2]+128)/256;
 }
 
+// Reduce only the minor axis of a projected directional penumbra.
+// Integer arithmetic is symmetrical for negative and positive offsets
+// under C17 truncation toward zero. Radius 5 yields +/-3px minor axis.
+static inline int b3Ps2ShadowCompressMinor(int offset)
+{
+    return (offset*2)/3;
+}
+
 static inline int b3Ps2ShadowOffset5(int index,int radius)
 {
     if(index==-2)return -radius;

@@ -65,8 +65,9 @@ static int s_halfMask[2];
 static int s_quarterMask[2];
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 static int s_pcssRadius=1;
-// Screen-space scissor bounds of this *one* caster shadow, including
-// kernel radius. Avoid drawing 9/21 full-screen textured quads 40 times.
+static int s_pcssMajorX=1;
+// Scissor bounds enclose the UNION of silhouettes for an entire
+// radius bucket, including kernel support; never one box per pass.
 static int s_pcssX0=0,s_pcssY0=0;
 static int s_pcssX1=B3_PS2_GS_W-1,s_pcssY1=B3_PS2_GS_H-1;
 #endif
@@ -731,13 +732,16 @@ static void b3GsKawasePass(int target,int targetW,int targetH,
     b3GsKawaseBlit(targetW,targetH,sourceW,sourceH, radius, radius);
 }
 #if defined(BOX3D_GS_PCSS_SHADOWS)
-void b3GsShadowSetPenumbra(int radius,int x0,int y0,int x1,int y1)
+void b3GsShadowSetPenumbra(int radius,int x0,int y0,
+                           int x1,int y1,int majorX)
 {
     if(radius<1)radius=1;
     if(radius>5)radius=5;
     s_pcssRadius=radius;
-    // Pad the projected silhouette by the furthest filter tap and
-    // rasterization rounding. Clip both mask CLEAR and final blending.
+    s_pcssMajorX=(majorX!=0);
+    // Pad the union bounds by more than the largest projected filter
+    // shift. The RAW mask clear always covers its FULL texture;
+    // this scissor applies ONLY to the final filtered composite.
     int pad=radius*3+6;
     x0-=pad;y0-=pad;x1+=pad;y1+=pad;
     if(x0<0)x0=0;
@@ -803,6 +807,14 @@ void b3GsShadowEnd(void)
             if(fix==0)continue;
             int dx=b3Ps2ShadowOffset5(ix,s_pcssRadius);
             int dy=b3Ps2ShadowOffset5(iy,s_pcssRadius);
+            // Projected directional light stretches the penumbra
+            // along the shadow direction instead of forming a round
+            // dark orb at the base of a tall narrow stack. Reduce the
+            // minor-axis offset without changing total kernel weight.
+            if(s_pcssMajorX)
+                dy=b3Ps2ShadowCompressMinor(dy);
+            else
+                dx=b3Ps2ShadowCompressMinor(dx);
             b3GsShadowCompositeTap(B3_PS2_GS_W,B3_PS2_GS_H,
                                    dx,dy,fix);
         }

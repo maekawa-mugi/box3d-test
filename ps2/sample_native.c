@@ -672,6 +672,33 @@ static void render_receiver_shadows(int receiver)
     if(cameraZ<2.0f)cameraZ=2.0f;
     float pxPerMeter=s_scene.camera.focal/cameraZ;
 
+    // Screen-space major axis of the light's projection along the
+    // receiving plane. The penumbra's minor axis is deliberately
+    // shorter to avoid a circular dark halo around narrow casters.
+    float dn=direction.x*plane.normal.x+
+             direction.y*plane.normal.y+
+             direction.z*plane.normal.z;
+    b3ShadowVec3 tangent={
+        direction.x-dn*plane.normal.x,
+        direction.y-dn*plane.normal.y,
+        direction.z-dn*plane.normal.z
+    };
+    b3ShadowVec3 tangentTip={
+        plane.origin.x+tangent.x,
+        plane.origin.y+tangent.y,
+        plane.origin.z+tangent.z
+    };
+    int lightMajorX=1;
+    int ax,ay,bx,by;
+    if(b3GsProjectScreen(s_scene.camera,toPoint3(plane.origin),&ax,&ay) &&
+       b3GsProjectScreen(s_scene.camera,toPoint3(tangentTip),&bx,&by))
+    {
+        int dx=bx-ax,dy=by-ay;
+        if(dx<0)dx=-dx;
+        if(dy<0)dy=-dy;
+        lightMajorX=(dx>=dy);
+    }
+
     for(int caster=1;caster<s_scene.count;++caster)
     {
         if(caster==receiver)continue;
@@ -740,7 +767,7 @@ static void render_receiver_shadows(int receiver)
 #if defined(BOX3D_GS_PCSS_SHADOWS)
         if(bucketCasters[pass]==0)continue;
         b3GsShadowSetPenumbra(pass,bx0[pass],by0[pass],
-                               bx1[pass],by1[pass]);
+                               bx1[pass],by1[pass],lightMajorX);
 #endif
         // Inside this pass overlapping silhouettes REPLACE the same
         // 128-valued coverage; they do not repeatedly darken the scene.
@@ -779,9 +806,10 @@ static void render_receiver_shadows(int receiver)
     {
         int nonempty=0;
         for(int r=1;r<=5;++r)nonempty+=bucketCasters[r]!=0;
-        printf("BOX3D_PCSS_RECEIVER,scene=%d,receiver=%d,casters=%u,radius_min=%d,radius_max=%d,buckets=%d,composites=%d\n",
+        printf("BOX3D_PCSS_RECEIVER,scene=%d,receiver=%d,casters=%u,radius_min=%d,radius_max=%d,buckets=%d,composites=%d,major_axis=%c\n",
                s_scene.kind,receiver,projectedHulls,
-               projectedHulls?minRadius:0,maxRadius,nonempty,nonempty);
+               projectedHulls?minRadius:0,maxRadius,nonempty,nonempty,
+               lightMajorX?'X':'Y');
     }
 #endif
     if(s_frame%240==0)

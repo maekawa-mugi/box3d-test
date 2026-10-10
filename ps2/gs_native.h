@@ -35,9 +35,11 @@ void b3GsSkyGradient(void);
 void b3GsShadowBegin(void);
 void b3GsShadowEnd(void);
 #if defined(BOX3D_GS_PCSS_SHADOWS)
-// Set before EACH caster b3GsShadowBegin(): radius 1..5px, projected
-// screen bounds of that caster. Applies to both mask clear and composite.
-void b3GsShadowSetPenumbra(int radius,int x0,int y0,int x1,int y1);
+// Configure ONE grouped PCSS pass (all casters with the same radius).
+// The union bbox is padded for sampling, then scissored for composite.
+// majorX=1 when projected light direction is X-dominant; 0 for Y.
+void b3GsShadowSetPenumbra(int radius,int x0,int y0,
+                           int x1,int y1,int majorX);
 int b3GsProjectScreen(b3GsCamera camera,b3GsPoint3 point,
                       int* x,int* y);
 #endif

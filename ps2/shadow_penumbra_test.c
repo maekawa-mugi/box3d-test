@@ -25,6 +25,11 @@ int main(void)
     }
     assert(total==98);
     assert(nonzero==21);
+    assert(b3Ps2ShadowCompressMinor(5)==3);
+    assert(b3Ps2ShadowCompressMinor(-5)==-3);
+    assert(b3Ps2ShadowCompressMinor(3)==2);
+    assert(b3Ps2ShadowCompressMinor(-3)==-2);
+    assert(b3Ps2ShadowCompressMinor(0)==0);
     assert(b3Ps2ShadowOffset5(-2,3)==-3);
     assert(b3Ps2ShadowOffset5(-1,3)==-2);
     assert(b3Ps2ShadowOffset5( 1,3)== 2);
