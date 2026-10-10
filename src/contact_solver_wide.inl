@@ -6,6 +6,7 @@
 #include "platform.h"
 #include "simd.h"
 #include "simd_wide.h"
+#include <string.h> // VU0 sweep record initialization
 #if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
 #include "../ps2/vu0_sweep.h"
 #endif

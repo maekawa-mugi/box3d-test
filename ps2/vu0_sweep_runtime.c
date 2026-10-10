@@ -17,6 +17,7 @@ extern uint32_t B3Vu0Sweep_CodeEnd __attribute__((section(".vudata")));
 static int s_resident,s_ready;
 static const char* s_status="VU0 SWEEP NOT INIT";
 static unsigned s_epoch,s_stepCalls,s_liveCalls,s_liveGroups;
+static int s_idleKnown;
 static _Alignas(64) b3Vu0SweepBlock s_result,s_expected;
 static int waitIdle(void)
 {
@@ -33,10 +34,14 @@ const char* b3Vu0SweepStatus(void){return s_status;}
 unsigned b3Vu0SweepGetLiveCalls(void){return s_liveCalls;}
 unsigned b3Vu0SweepGetLiveGroups(void){return s_liveGroups;}
 unsigned b3Vu0SweepStepEpoch(void){return s_epoch;}
-void b3Vu0SweepBeginPhysicsStep(void){++s_epoch;s_stepCalls=0;}
+void b3Vu0SweepBeginPhysicsStep(void){++s_epoch;s_stepCalls=0;s_idleKnown=0;}
 static int runSweep(const b3Vu0SweepRecord* input,b3Vu0SweepRecord* output,unsigned count)
 {
-    if(!count||count>B3_VU0_SWEEP_GROUPS||!waitIdle())return 0;
+    if(!count||count>B3_VU0_SWEEP_GROUPS)return 0;
+    // A completed VCALLMS already verified VU0 idle. Only the first
+    // launch of each physics step requires a new preflight poll.
+    if(!s_idleKnown && !waitIdle())return 0;
+    s_idleKnown=0;
     SWEEP_DATA[0]=count;
     const unsigned char* src=(const unsigned char*)input;
     volatile unsigned char* dst=(volatile unsigned char*)SWEEP_DATA+16u;
@@ -52,6 +57,7 @@ static int runSweep(const b3Vu0SweepRecord* input,b3Vu0SweepRecord* output,unsig
     __asm__ __volatile__("sync.l":::"memory");
     __asm__ __volatile__("vcallms 0":::"memory");
     if(!waitIdle())return 0;
+    s_idleKnown=1;
     unsigned char* out=(unsigned char*)output;
     for(unsigned g=0;g<count;++g){
         size_t offset=(g*B3_VU0_SWEEP_RECORD_QWS+
@@ -86,7 +92,7 @@ static int check(const b3Vu0SweepRecord* input,const b3Vu0SweepRecord* result,
 int b3Vu0SweepPromote(void)
 {
     if(!b3Vu0MicroIsReady())return 0;
-    s_resident=0;s_ready=0;s_status="VU0 SWEEP VERIFY";
+    s_resident=0;s_ready=0;s_idleKnown=0;s_status="VU0 SWEEP VERIFY";
     uintptr_t start=(uintptr_t)&B3Vu0Sweep_CodeStart;
     uintptr_t end=(uintptr_t)&B3Vu0Sweep_CodeEnd;
     if(end<=start||end-start>4096u||((end-start)&15u)!=0u||!waitIdle())
@@ -123,7 +129,7 @@ int b3Vu0SweepPromote(void)
     puts("BOX3D_VU0_SWEEP_PASS,groups=7,points=4,lanes=4");
     return 1;
 restore:
-    s_resident=0;s_ready=0;
+    s_resident=0;s_ready=0;s_idleKnown=0;
     puts("BOX3D_VU0_SWEEP_FALLBACK,restore_64_lane_kernel");
     if(!b3Vu0MicroUpload()||!b3Vu0MicroVerify()||!b3Vu0MicroDifferentialTest())
         puts("BOX3D_VU0_SWEEP_FALLBACK,legacy_restore_failed");
