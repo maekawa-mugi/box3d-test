@@ -174,6 +174,36 @@ static void draw_box(const SceneBody* body)
                     (float)origin.y+rotated.y,
                     (float)origin.z+rotated.z);
     }
+#if defined(BOX3D_GS_SOLID)
+    // Draw solid box sides for each dynamic body and the inclined plane.
+    // The large static ground remains a wireframe to preserve the grid.
+    if(body != &s_scene.objects[0])
+    {
+        static const int faces[6][4]={
+            {0,2,3,1}, {4,5,7,6}, {0,4,6,2},
+            {1,3,7,5}, {0,1,5,4}, {2,6,7,3}
+        };
+        static const b3Vec3 faceNormals[6]={
+            {0,0,-1},{0,0,1},{-1,0,0},{1,0,0},{0,-1,0},{0,1,0}
+        };
+        const b3Vec3 light={0.44f,0.82f,0.36f};
+        for(int face=0;face<6;++face)
+        {
+            b3Vec3 n=b3RotateVector(q,faceNormals[face]);
+            float diffuse=n.x*light.x+n.y*light.y+n.z*light.z;
+            if(diffuse<0)diffuse=0;
+            float shade=0.30f+0.67f*diffuse;
+            const uint8_t rr=(uint8_t)((float)body->r*shade);
+            const uint8_t gg=(uint8_t)((float)body->g*shade);
+            const uint8_t bb=(uint8_t)((float)body->b*shade);
+            const int* quad=faces[face];
+            b3GsTriangle3(s_scene.camera,verts[quad[0]],verts[quad[1]],
+                          verts[quad[2]],rr,gg,bb);
+            b3GsTriangle3(s_scene.camera,verts[quad[0]],verts[quad[2]],
+                          verts[quad[3]],rr,gg,bb);
+        }
+    }
+#endif
     for(int j=0;j<12;++j)
     {
         b3GsLine3(s_scene.camera,verts[endpoints[j][0]],verts[endpoints[j][1]],

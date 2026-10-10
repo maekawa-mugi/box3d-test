@@ -394,3 +394,15 @@ attempt to compile the original host-side C++/Sokol/ImGui application.
 screenshots, the new GS ELF has not yet been crosslinked or executed
 on PCSX2/hardware in this environment. Do not treat an ELF header
 check as proof that GS initialization or frame submission works.
+
+## PCSX2 confirmed native GS wireframe, and optional filled renderer
+
+Tester screenshot (2026-10-10) confirms a ground grid and animated
+stacking cuboids rendered at a reported **60fps** in PCSX2 by
+`ps2/box3d_ps2_samples.elf`, with actual Box3D simulation.
+A second `ps2/box3d_ps2_samples_solid.elf` is now built, using
+the same scene data but opting into hardware GS triangles and ZBUF32.
+No gsKit or libdraw: only direct GS GIF A+D DMA packets plus
+PS2SDK `graph` for CRT and `dma` for submission. The known-good
+wireframe renderer remains available separately. The new solid
+executable is not yet crossbuilt or run on PCSX2.

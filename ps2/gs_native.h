@@ -19,6 +19,11 @@ void b3GsBegin(void);
 void b3GsLine(int x0, int y0, int x1, int y1, uint8_t r, uint8_t g, uint8_t b);
 void b3GsLine3(b3GsCamera camera, b3GsPoint3 a, b3GsPoint3 b,
                uint8_t r, uint8_t g, uint8_t blue);
+// Draw one filled 3D triangle with GS native PRIM=TRIANGLE, using a
+// monotonic reversed-Z value so nearer triangles pass GS depth tests.
+// Built only into the separate BOX3D_GS_SOLID demonstration ELF.
+void b3GsTriangle3(b3GsCamera camera, b3GsPoint3 a, b3GsPoint3 b,
+                   b3GsPoint3 c, uint8_t r, uint8_t g, uint8_t blue);
 void b3GsPresent(void);
 b3GsCamera b3GsLookAt(b3GsPoint3 eye, b3GsPoint3 target, float focal);
 

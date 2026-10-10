@@ -26,5 +26,35 @@ DMA: `dma_channel_initialize`, `dma_channel_send_normal`,
 `dma_channel_wait`. Everything else in the rasterization pipeline
 is low-level GS packet assembly.
 
-**Crosslink and PCSX2 runtime for this new sample have not been tested
-by the assistant**, because PS2DEV is unavailable in this environment.
+**PCSX2 validation:** the tester provided a rendered screenshot of the
+wireframe stacking sample on 2026-10-10 and reported it runs at 60fps.
+This establishes real PS2 EE Box3D stepping plus native GS GIF wireframe
+output on PCSX2, not performance of physical PS2 silicon.
+
+## New optional GS filled triangles + hardware depth test
+
+The build now also creates `ps2/box3d_ps2_samples_solid.elf`. It uses
+the same Box3D physics sample runner but compiles the GS renderer with
+`-DBOX3D_GS_SOLID=1`. The **previous** `box3d_ps2_samples.elf` remains
+the regression-safe wireframe reference and is not silently replaced.
+
+Solid mode allocates an additional aligned 320x224x32-bit Z buffer
+using `graph_vram_allocate`, programs GS `ZBUF_1` and `TEST_1`
+through raw GIF A+D, clears depth to zero per frame with a GS SPRITE,
+then switches to `ZTST=GREATER_EQUAL` with higher Z assigned to nearer
+vertices. Each non-ground cuboid sends 12 GS `PRIM=TRIANGLE` primitives
+with a fixed directional ambient+diffuse color from its Box3D quaternion;
+the ground grid and optional edges remain native GS lines. The renderer
+waits for `GS_FINISH` and VBlank before swapping color buffers as
+before. No gsKit, PS2SDK draw library, VU microcode, textures, or
+C++/ImGui runtime is involved.
+
+The first solid implementation does not do full near-plane triangle
+clipping or perspective-correct depth interpolation; large or
+camera-intersecting triangles may be rejected entirely. This is a
+rendering bring-up, not a production mesh renderer.
+
+**Status:** filled/Z-buffered GS ELF has not yet been crosscompiled
+or executed in PCSX2. Verify separately from the already confirmed
+wireframe screenshot; if solid fails, run the old
+`ps2/box3d_ps2_samples.elf` and report logs/screenshots.
