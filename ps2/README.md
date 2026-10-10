@@ -163,3 +163,51 @@ can be distinguished from geometry/GIF command generation.
 **Neither the FPS gain nor the new shadow softness is yet validated
 in PCSX2**. Compare the before/after same 256/400-body pages and
 capture `BOX3D_PERF` for quantitative results.
+
+## 2026-10-10: Fix PCSS double shadows by combining overlapping masks
+
+The 480p tester's Spinning Books screenshot after the first
+half-resolution prefilter still showed distinct dark edges, i.e.
+**double exposure**, not merely jagged texture sampling. Root cause
+was the old radius-bucket implementation: when two differently blurred
+caster groups landed on the same floor pixels, the GS executed two
+independent subtractive `FIX=96` shadows on those pixels. Any amount
+of bilinear PCF filtering still leaves a doubled/darker silhouette.
+
+The single `ps2/box3d_ps2.elf` now builds overlap-connected caster
+groups on the EE before sending any shadow mask GS draws. Each
+caster's projected silhouette is expanded by the whole PCSS kernel
+support. If two such expanded rectangles overlap, their casters are
+merged into a single connected component (including transitive chains
+of overlaps). The component's silhouettes form **one binary mask**
+and undergo **exactly one GS filtering and subtractive composite**.
+Casters with disjoint screen-space penumbrae keep separate masks and
+their own distance-derived blur radii. An overlapping component uses
+the **maximum radius** of its members, a deliberate conservative
+approximation that trades some per-object softness control for
+unambiguous, single-exposure shadows. This is still PCSS-inspired,
+not a depth-buffer blocker search with a spatially varying penumbra.
+
+The serial log every 240 frames includes:
+
+```
+BOX3D_PCSS_UNION,scene=2,receiver=0,casters=3,components=1,composites=1,radius_min=...,radius_max=...,major_axis=X
+```
+
+The *numbers in this sample line are illustrative*, not a measured
+PCS​​X2 result. For three touching silhouettes, the intended value is
+`composites=1` rather than two or three. The deterministic C17
+regression includes a 40-caster overlapping test and disjoint groups:
+
+```sh
+cc -std=c17 -O2 -Wall -Wextra -Werror -pedantic \
+  ps2/shadow_group_test.c -o /tmp/box3d_shadow_group_test
+/tmp/box3d_shadow_group_test
+```
+
+No new ELF, no new VRAM pages, no changes to physics or controller
+pages. The EE grouping requires O(N²) bounding-box comparisons
+in the worst case; 256/400-box performance should therefore be
+**re-measured**, not assumed faster. The host grouping algorithm has
+passed its regression test, but **the newly pushed GS output has not
+yet been rebuilt or visually confirmed on PCSX2**.
