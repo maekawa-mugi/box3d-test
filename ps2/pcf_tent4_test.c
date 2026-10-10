@@ -5,7 +5,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
-static float bilinear(const float a[3][3],float x,float y)
+static float bilinear(float a[3][3],float x,float y)
 {
     int ix=(int)floorf(x),iy=(int)floorf(y);
     float tx=x-(float)ix,ty=y-(float)iy;
