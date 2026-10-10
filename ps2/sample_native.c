@@ -77,12 +77,8 @@ typedef struct Scene
 
 static Scene s_scene;
 static uint32_t s_frame;
-#if defined(BOX3D_PS2_UNIFIED)
-// Cached for a single rendered Box3D world step, reused by visible
-// boxes and both receiver-shadow passes. Saves two rigid transforms of
-// every 8-corner hull and repeated body ID lookups on dense scenes.
-
-#endif
+// Unified 480p build caches Box3D poses, hulls and shadow projections
+// once per frame to avoid repeated EE work under 256/400-body stress.
 #if defined(BOX3D_GS_PROGRESSIVE)
 static Human s_ragdoll;
 #endif
@@ -1118,7 +1114,7 @@ int main(void)
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
-    puts("BOX3D_UNIFIED,video=640x480p,shadow=PCSS,pcf_filter=4_or_21_bilinear,pagination=dpad,stress=64_144_256_400");
+    puts("BOX3D_UNIFIED,video=640x480p,shadow=PCSS,pcf_filter=4tap_contact_9tap_prefiltered_far,pagination=dpad,stress=64_144_256_400");
     puts("BOX3D_SHADOW_FILTER,PCSS_BUCKETS,source=640x480,radius=1..5,pcf=bilinear");
 #else
     puts("BOX3D_SHADOW_FILTER,PCSS_INSPIRED_PER_CASTER,source=320x224,radius=1..5,taps=9_or_21");

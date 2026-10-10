@@ -826,10 +826,10 @@ void b3GsShadowEnd(void)
 {
     s_shadowPass=0;
 #if defined(BOX3D_GS_PCSS_SHADOWS)
-    // Each Box3D caster gets its own clipped mask. Use per-caster
-    // receiver separation to choose a compact screen-space penumbra.
-    // Nearby geometry keeps the proven 3x3 / 96 FIX pattern; distant
-    // geometry uses a 5x5 binomial / ~98 FIX pattern (21 nonzero taps).
+    // PCSS groups casters by receiver gap. Each group has one clipped
+    // mask and one subtractive composite, not one pass per body.
+    // Nearby geometry uses the 4-bilinear-tap PCF3x3/96 FIX kernel;
+    // distant groups prefilter to half resolution, then use 9 taps.
     // GS bilinear PCF at contact. At larger gaps the raw binary
     // silhouettes are first filtered by native GS 2:1 downsampling.
     // This removes isolated jagged mask texels before radius sampling.
