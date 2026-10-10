@@ -55,7 +55,7 @@ static int s_groundCacheReady;
 static int s_shadowFilterMode;
 void b3GsSetShadowFilterMode(int mode)
 {
-    s_shadowFilterMode=(mode>=0 && mode<=2)?mode:0;
+    s_shadowFilterMode=(mode>=0 && mode<=3)?mode:0;
 }
 #endif
 #if defined(BOX3D_PS2_UNIFIED)
@@ -945,7 +945,23 @@ void b3GsShadowEnd(void)
     // Visual A/B isolation: bypass ALL prefilters while retaining the
     // exact same projected union geometry. PCF uses proven four-tap
     // full-res tent; hard uses one full-res RAW mask subtraction.
-    if(s_shadowFilterMode!=0)
+    if(s_shadowFilterMode==0 && s_pcssRadius>1)
+    {
+        b3GsShadowCompositeSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H);
+        b3GsPcssScissor();
+        int shift=b3Ps2PcssDirectShift(s_pcssRadius);
+        for(int iy=-1;iy<=1;++iy)
+        for(int ix=-1;ix<=1;++ix)
+            b3GsShadowCompositeSmoothTap(
+                ix*shift,iy*shift,ix,iy,
+                b3Ps2PcssDirectWeight(s_pcssRadius,ix,iy));
+        b3GsAD(GS_SET_SCISSOR(0,B3_PS2_GS_W-1,0,B3_PS2_GS_H-1),
+               GS_REG_SCISSOR_1);
+        b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,B3_GS_DEPTH_PSM,0),GS_REG_ZBUF_1);
+        b3GsAD(GS_SET_TEST(0,0,0,0,0,0,1,2),GS_REG_TEST_1);
+        return;
+    }
+    if(s_shadowFilterMode==1 || s_shadowFilterMode==2)
     {
         b3GsShadowCompositeSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H);
         b3GsPcssScissor();

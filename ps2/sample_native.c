@@ -95,7 +95,7 @@ static int s_padReady;
 // User-selectable physics A/B modes; change between completed steps only.
 static int s_simSubsteps=4;
 static int s_vu0Mode=0;
-static int s_shadowVisualMode=0; // 0=PCSS 1=PCF 2=HARD 3=OFF
+static int s_shadowVisualMode=0; // 0=PCSS,1=PCF,2=HARD,3=OFF,4=LEGACY
 #endif
 static void pad_nav_init(void)
 {
@@ -148,12 +148,12 @@ static int pad_nav_poll(void)
     }
     if(pressed&PAD_SQUARE)
     {
-        s_shadowVisualMode=(s_shadowVisualMode+1)%4;
-        b3GsSetShadowFilterMode(s_shadowVisualMode==3?
-                                0:s_shadowVisualMode);
+        s_shadowVisualMode=(s_shadowVisualMode+1)%5;
+        b3GsSetShadowFilterMode(s_shadowVisualMode==3?0:
+                                s_shadowVisualMode==4?3:s_shadowVisualMode);
         printf("BOX3D_SHADOW_MODE,mode=%d,label=%s\n",
                s_shadowVisualMode,
-               (const char*[]){"PCSS","PCF","HARD","OFF"}[s_shadowVisualMode]);
+               (const char*[]){"PCSS","PCF","HARD","OFF","LEGACY"}[s_shadowVisualMode]);
     }
 #endif
     if(pressed&PAD_LEFT)return -1;
@@ -1265,7 +1265,8 @@ static void render_official_hud(void)
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
     static const char* shadowLabels[]={
-        "SHADOW PCSS","SHADOW PCF","SHADOW HARD","SHADOW OFF"
+        "SHADOW PCSS","SHADOW PCF","SHADOW HARD","SHADOW OFF",
+        "SHADOW LEGACY PCSS"
     };
     b3GsOverlayText(28,112,shadowLabels[s_shadowVisualMode],188,226,240);
     // Display previous frame's measured utilization, NOT PCSX2 FPS
@@ -1434,7 +1435,7 @@ int main(void)
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
 #if defined(BOX3D_PS2_UNIFIED)
-    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off");
+    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off_legacy");
 #endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
