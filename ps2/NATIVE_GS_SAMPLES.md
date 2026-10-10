@@ -250,3 +250,43 @@ This remains under the PS2's 4MiB GS local memory limit, leaving room for
 more detailed meshes, textures, light masks and screen-space passes.
 The final HUD explicitly prints `SOFT GS KAWASE` in this variant so
 screenshots cannot be confused with the hard-shadow edition.
+
+## Shadow disappearance and occlusion diagnostics (2026-10-10)
+
+Tester PCSX2 screenshots show that the old receiver-shadow edition still
+has holes while the original soft-shadow edition shows **no visible
+shadows**. Neither build is classified as correct. The current two
+investigations are separate:
+
+- **Hard receiver-shadow geometry/depth:** box/receiver intersections
+  are now included in the silhouette hull. A further fix switches
+  `BOX3D_GS_RECEIVER_SHADOWS` to perspective-correct **inverse depth**
+  for the GS hardware Z test. Linear camera distance Z was invalid
+  across perspective-projected triangles: the checker floor and the
+  shadow polygon use different triangulations of the same physical plane,
+  so GS interpolation could reject shadow triangles even when they
+  exactly align with the receiver. The new `1/z` encoding preserves
+  GS `ZTST=GEQUAL` and Z clear=0. Legacy sample ELFs are unchanged.
+- **Soft GS VRAM ping-pong path:** a separate
+  `ps2/box3d_ps2_samples_softdebug.elf` places three real GS-rendered
+  offscreen textures near the bottom of the screen, explicitly labeled
+  `RAW`, `QUARTER`, `FINAL`. These identify whether the problem is
+  in the shadow mask, half/quarter downsample, or the final RGB
+  subtraction composite. This is a **native GS display of actual VRAM
+  surfaces**, not synthetic debug graphics or CPU readback.
+
+Recommended test order after `sh ps2/build_ee.sh`:
+
+1. `ps2/box3d_ps2_samples_shadows.elf`: confirm the enlarged solid
+   shadows no longer fragment against checker floor / inclined receiver.
+2. `ps2/box3d_ps2_samples_softdebug.elf`: inspect the actual `RAW`,
+   `QUARTER`, `FINAL` thumbnails. A visible RAW but black FINAL
+   points to blur/texture sampling; a visible FINAL with no shadow
+   on the scene points to composite/blend settings; black RAW indicates
+   projection/Z-mask generation still fails.
+3. `ps2/box3d_ps2_samples_softshadows.elf`: only evaluate final
+   quality/frame rate after the first two work.
+
+These editions remain unverified on the user's R5900/PCSX2 after these
+fixes. Do not claim the geometry or blur bug is fixed until the tester
+shows the new screen and, ideally, the `BOX3D_SHADOW_RECEIVERS` CSV.
