@@ -95,6 +95,7 @@ static int s_padReady;
 // User-selectable physics A/B modes; change between completed steps only.
 static int s_simSubsteps=4;
 static int s_vu0Mode=0;
+static int s_shadowVisualMode=0; // 0=PCSS 1=PCF 2=HARD 3=OFF
 #endif
 static void pad_nav_init(void)
 {
@@ -126,7 +127,7 @@ static int pad_nav_poll(void)
     if(!padRead(0,0,&buttons))return 0;
     uint16_t held=(uint16_t)(~buttons.btns)&(PAD_LEFT|PAD_RIGHT
 #if defined(BOX3D_PS2_UNIFIED)
-                                             |PAD_UP|PAD_DOWN
+                                             |PAD_UP|PAD_DOWN|PAD_SQUARE
 #endif
                                              );
     uint16_t pressed=(uint16_t)(held&~s_padHeld);
@@ -144,6 +145,15 @@ static int pad_nav_poll(void)
         b3Ps2SetVU0Enabled(s_vu0Mode);
         printf("BOX3D_PHYS_MODE,substeps=%d,vu0=%d\n",
                s_simSubsteps,s_vu0Mode);
+    }
+    if(pressed&PAD_SQUARE)
+    {
+        s_shadowVisualMode=(s_shadowVisualMode+1)%4;
+        b3GsSetShadowFilterMode(s_shadowVisualMode==3?
+                                0:s_shadowVisualMode);
+        printf("BOX3D_SHADOW_MODE,mode=%d,label=%s\n",
+               s_shadowVisualMode,
+               (const char*[]){"PCSS","PCF","HARD","OFF"}[s_shadowVisualMode]);
     }
 #endif
     if(pressed&PAD_LEFT)return -1;
@@ -1254,7 +1264,10 @@ static void render_official_hud(void)
 #endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
-    b3GsOverlayText(28,112,"PCF FILTER  PCSS RADIUS",188,226,240);
+    static const char* shadowLabels[]={
+        "SHADOW PCSS","SHADOW PCF","SHADOW HARD","SHADOW OFF"
+    };
+    b3GsOverlayText(28,112,shadowLabels[s_shadowVisualMode],188,226,240);
     // Display previous frame's measured utilization, NOT PCSX2 FPS
     // capped to 60 by VSync. Includes physics, GS packet build and
     // DMA/GS FINISH, excludes deliberate VSync idle time.
@@ -1351,7 +1364,10 @@ static void render(void)
 #if defined(BOX3D_PS2_UNIFIED)
     uint32_t phaseStart=b3Ps2ReadCpuCycles();
 #endif
-    render_receiver_shadows(0);
+#if defined(BOX3D_PS2_UNIFIED)
+    if(s_shadowVisualMode!=3)
+#endif
+        render_receiver_shadows(0);
 #if defined(BOX3D_PS2_UNIFIED)
     s_frameShadowTicks+=b3Ps2DeltaCpuCycles(phaseStart,b3Ps2ReadCpuCycles());
 #endif
@@ -1370,7 +1386,10 @@ static void render(void)
         s_frameBoxTicks+=b3Ps2DeltaCpuCycles(phaseStart,b3Ps2ReadCpuCycles());
         phaseStart=b3Ps2ReadCpuCycles();
 #endif
-        render_receiver_shadows(1);
+#if defined(BOX3D_PS2_UNIFIED)
+        if(s_shadowVisualMode!=3)
+#endif
+            render_receiver_shadows(1);
 #if defined(BOX3D_PS2_UNIFIED)
         s_frameShadowTicks+=b3Ps2DeltaCpuCycles(phaseStart,b3Ps2ReadCpuCycles());
 #endif
@@ -1415,7 +1434,7 @@ int main(void)
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
 #if defined(BOX3D_PS2_UNIFIED)
-    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5");
+    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off");
 #endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
@@ -1520,7 +1539,7 @@ int main(void)
             if(s_perfSamples>=60)
             {
                 double divisor=294912.0*(double)s_perfSamples;
-                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_shadow_ms=%.3f,avg_box_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u,substeps=%d,vu0=%d\n",
+                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_shadow_ms=%.3f,avg_box_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u,substeps=%d,vu0=%d,shadow_mode=%d\n",
                        s_scene.kind,(unsigned long)s_frame,s_scene.count-1,
                        (double)s_sumPhysicsTicks/divisor,
                        (double)s_sumBuildTicks/divisor,
@@ -1532,7 +1551,7 @@ int main(void)
                                 s_sumGsTicks)/
                          (4915200.0*(double)s_perfSamples/100.0),
                        (double)s_lastVsyncMs,b3GsGetLastGifQwords(),
-                       s_simSubsteps,s_vu0Mode);
+                       s_simSubsteps,s_vu0Mode,s_shadowVisualMode);
                 b3Counters counters=b3World_GetCounters(s_scene.world);
                 printf("BOX3D_PHYS_PROFILE,scene=%d,frame=%lu,substeps=%d,vu0=%d,pairs_ms=%.3f,collide_ms=%.3f,solve_ms=%.3f,constraints_ms=%.3f,contacts=%d,awake=%d\n",
                        s_scene.kind,(unsigned long)s_frame,

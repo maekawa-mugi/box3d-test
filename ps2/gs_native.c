@@ -52,6 +52,11 @@ static unsigned s_lastGifQwords;
 static _Alignas(64) B3GsQword s_groundCache[B3_GS_GROUND_CACHE_QWORDS];
 static unsigned s_groundCacheCount,s_groundRecordStart;
 static int s_groundCacheReady;
+static int s_shadowFilterMode;
+void b3GsSetShadowFilterMode(int mode)
+{
+    s_shadowFilterMode=(mode>=0 && mode<=2)?mode:0;
+}
 #endif
 #if defined(BOX3D_PS2_UNIFIED)
 static uint32_t s_lastGsWaitTicks,s_lastVsyncWaitTicks;
@@ -936,6 +941,25 @@ void b3GsShadowBegin(void)
 void b3GsShadowEnd(void)
 {
     s_shadowPass=0;
+#if defined(BOX3D_PS2_UNIFIED)
+    // Visual A/B isolation: bypass ALL prefilters while retaining the
+    // exact same projected union geometry. PCF uses proven four-tap
+    // full-res tent; hard uses one full-res RAW mask subtraction.
+    if(s_shadowFilterMode!=0)
+    {
+        b3GsShadowCompositeSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H);
+        b3GsPcssScissor();
+        if(s_shadowFilterMode==1)
+            b3GsPcf4Tap(B3_PS2_GS_W,B3_PS2_GS_H);
+        else
+            b3GsShadowCompositeTap(B3_PS2_GS_W,B3_PS2_GS_H,0,0,96);
+        b3GsAD(GS_SET_SCISSOR(0,B3_PS2_GS_W-1,0,B3_PS2_GS_H-1),
+               GS_REG_SCISSOR_1);
+        b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,B3_GS_DEPTH_PSM,0),GS_REG_ZBUF_1);
+        b3GsAD(GS_SET_TEST(0,0,0,0,0,0,1,2),GS_REG_TEST_1);
+        return;
+    }
+#endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
     // PCSS groups casters by receiver gap. Each group has one clipped
     // mask and one subtractive composite, not one pass per body.

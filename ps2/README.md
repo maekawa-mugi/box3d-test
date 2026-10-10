@@ -378,3 +378,16 @@ per-component linked member list also replaces N-component-by-N-caster
 scans during receiver shadow-mask rasterization. These optimizations
 preserve the default 4-substep and scalar VU0 physics settings.
 Rebuild/PCS​​X2 visual comparison is required to confirm frame-time gains.
+
+## 2026-10-10: runtime shadow quality isolation
+
+Press **SQUARE** to cycle `PCSS -> PCF -> HARD -> OFF`
+without rebuilding or resetting the physics scene. This distinguishes
+projection/coverage artifacts (visible even with HARD) from problems
+introduced by half/quarter prefiltering and 32-bit weighted mask
+accumulation (visible only with PCSS). PCF applies the legacy four-tap
+full-resolution contact filter to the *same* projected and unioned mask.
+OFF skips CPU shadow projection and all its GS passes, making its
+`avg_build_ms` directly comparable to the shadowed modes. The current
+mode is displayed in the scene HUD and logged with `BOX3D_PERF`.
+Default mode remains PCSS, unchanged from the previous screenshot.

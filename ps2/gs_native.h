@@ -38,6 +38,7 @@ typedef struct b3GsCamera {
 #if defined(BOX3D_PS2_UNIFIED)
 // Cache the camera-dependent (but frame-independent) checker floor GIF
 // commands once after scene creation, before receiver shadows.
+void b3GsSetShadowFilterMode(int mode); // 0=PCSS,1=PCF,2=hard
 void b3GsInvalidateGroundCache(void);
 int b3GsEmitCachedGround(void);
 void b3GsBeginGroundRecord(void);
