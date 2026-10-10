@@ -242,6 +242,29 @@ for symbol in main b3World_Step b3GsShadowBegin b3GsShadowEnd b3GsPresent b3Shad
         die "PCF mask sample missing linked symbol: $symbol"
 done
 
+# PCSS-inspired contact-hardening shadows. The GS stays fixed-function:
+# one full-res mask per Box3D caster with 1-5px height-dependent radius.
+# Distinct from depth-map PCSS, and separately comparable to fixed PCF.
+PCSS_SAMPLE_OUT=${PCSS_SAMPLE_OUT:-$ROOT/ps2/box3d_ps2_samples_pcss.elf}
+"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
+    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
+    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 \
+    -DBOX3D_GS_RECEIVER_SHADOWS=1 -DBOX3D_GS_KAWASE_SHADOWS=1 \
+    -DBOX3D_GS_PCF_SHADOWS=1 -DBOX3D_GS_PCSS_SHADOWS=1 \
+    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
+    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
+    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
+    "$ROOT/ps2/shadow_project.c" "$LIB" \
+    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$PCSS_SAMPLE_OUT"
+"$READELF" -h "$PCSS_SAMPLE_OUT" | grep -q 'Machine:.*MIPS' ||
+    die "PCSS-inspired sample is not a MIPS ELF"
+"$READELF" -h "$PCSS_SAMPLE_OUT" | grep -q 'Type:.*EXEC' ||
+    die "PCSS-inspired sample is not executable ELF"
+for symbol in main b3World_Step b3GsShadowSetPenumbra b3GsProjectScreen b3GsPresent b3ShadowProjectBox; do
+    "$NM" --defined-only "$PCSS_SAMPLE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
+        die "PCSS-inspired sample missing linked symbol: $symbol"
+done
+
 printf 'PS2 BUILD OK: %s\n' "$OUT"
 printf 'PS2 BENCH BUILD OK: %s\n' "$BENCH_OUT"
 printf 'PS2 NATIVE GS SAMPLES OK: %s\n' "$SAMPLE_OUT"
@@ -251,5 +274,6 @@ printf 'PS2 CLIPPED PROJECTED SHADOW SAMPLES OK: %s\n' "$SHADOW_SAMPLE_OUT"
 printf 'PS2 GS DUAL KAWASE SOFT SHADOW SAMPLES OK: %s\n' "$SOFT_SHADOW_OUT"
 printf 'PS2 GS SOFT SHADOW STAGE DEBUG OK: %s\n' "$SOFT_DEBUG_OUT"
 printf 'PS2 GS PCF-STYLE SHADOWS OK: %s\n' "$PCF_SAMPLE_OUT"
+printf 'PS2 GS CONTACT-HARDENING SHADOWS OK: %s\n' "$PCSS_SAMPLE_OUT"
 printf 'Target: %s\n' "$("$CC" -dumpmachine)"
 printf 'Run this ELF in PCSX2 or on PS2 and record BOX3D_STAGE / PASS / FAIL.\n'

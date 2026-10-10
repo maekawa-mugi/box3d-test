@@ -585,3 +585,79 @@ Kawase ping-pong VRAM surfaces (about 175 KiB in raw texel storage).
 
 **The new PCF ELF has not yet been crosscompiled/run in PCS​​X2; the
 soft working screenshot validates only the older Kawase pipeline.**
+
+## PCSS-inspired contact hardening on PS2 native GS (2026-10-10)
+
+The tester's PCS​​X2 screenshot verified that `box3d_ps2_samples_pcf.elf`
+executes correctly with sharp, modest 3x3-filtered shadows over the
+inclined-plane receiver. In response to the PS2-era "Onimusha 3"-style
+effect of wider penumbrae as the shadow caster lifts off the ground,
+`ps2/box3d_ps2_samples_pcss.elf` is added as an **independent opt-in**
+experiment. The proven PCF, hard and broad Kawase variants are retained.
+
+Algorithm:
+1. From the **actual Box3D body quaternion/position**, project each
+   convex hull against its receiving ground/ramp plane as before.
+2. Compute the minimum nonnegative distance of all eight box corners
+   above the receiving plane. Positive distance implies the caster is
+   floating; zero means direct contact / partial penetration.
+3. Compute projected pixels/meter from the camera's focal length and
+   receiver depth, then quantize penumbra radius to 1..5 pixels:
+   `clamp(round(1 + 0.08 * gap_m * focal_px / camera_depth_m), 1, 5)`.
+   This is an artistically chosen finite-emitter model, not an exact
+   physical area light. Increase 0.08 for a larger effective light.
+4. **Individually** rasterize each caster's complete shadow hull into
+   full-resolution GS RGB coverage with a cropped SCISSOR. Mask clears
+   and composite sprites are scissored to its projected on-screen
+   footprint plus the kernel radius, avoiding full-screen 9/21-tap
+   passes for all 40 stacked boxes.
+5. For contact radius=1, use the proven nine-tap 3x3 GS bilinear PCF-like
+   coverage filter (weight sum=96). For farther objects, use a
+   Gaussian-binomial 5x5 pattern at two radii (21 nonzero taps; weights
+   sum=98), implemented entirely as GS fixed-function RGB subtractive
+   blending. This is still only full-resolution mask sampling, with
+   no CPU convolution, depth readback or GLSL.
+6. Composite each caster shadow onto its actual receiver **before**
+   subsequent opaque geometry. The separate floor/incline receiver
+   ordering and hardware Z rendering of later solids stay in place.
+
+This is **PCSS-inspired variable-size penumbra**, not a true GPU
+percentage-closer soft-shadow algorithm. Genuine PCSS searches a shadow
+depth map for occluding blockers, estimates blocker/receiver separation,
+then performs variable-radius depth comparisons. The current GS path
+already has the Box3D caster geometry and receiving plane, so it uses
+that depth/separation information on the EE to select mask filter
+radius. The GS does the sampling and blending work.
+
+`BOX3D_SHADOW_FILTER,PCSS_INSPIRED_PER_CASTER` is emitted at startup.
+Every 240 simulation frames `BOX3D_PCSS_RECEIVER` logs the number
+of casters and min/max radii for each receiver; `BOX3D_PCSS_FRAME`
+records EE Count ticks per frame vs the 60Hz nominal budget. GS HUD
+reads `GS PCSS HEIGHT` with a lower-right `PCSS 3D` badge.
+
+Build:
+```sh
+git pull --ff-only origin experiment/ps2-ee-scalar
+sh ps2/build_ee.sh
+# Run ps2/box3d_ps2_samples_pcss.elf in PCSX2
+# Compare to the existing ps2/box3d_ps2_samples_pcf.elf
+```
+
+Portable host-only tests for the radius quantizer and 5x5 GS weights:
+```sh
+cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic \
+  ps2/shadow_penumbra_test.c -o /tmp/b3_pcss_penumbra_test
+/tmp/b3_pcss_penumbra_test
+```
+
+The expanded stacked-body scene is the worst case for this per-caster
+renderer. Its frame cost is expected to be higher than the fixed PCF
+mode. The GS per-caster viewport scissor helps bound raster bandwidth
+but frame-time needs PCS​​X2 measurement before claiming 60fps.
+
+**New PCSS ELF has not been crossbuilt or run on PCS​​X2 in this
+environment**; the provided screenshot validates the original PCF
+edition only. Shadow overlap can accumulate darker than the earlier
+single combined mask. Full self-shadowing, temporal soft shadows,
+depth-map blocker searches and complex receiver intersections are
+future work.

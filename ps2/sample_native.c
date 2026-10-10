@@ -638,15 +638,20 @@ int main(void)
         uint32_t frameEnd=b3Ps2ReadCpuCycles();
         if(s_frame%120==0)
         {
-            printf("BOX3D_KAWASE_FRAME,scene=%d,frame=%lu,physics_ticks=%lu,render_vsync_ticks=%lu,total_ticks=%lu,target60_ticks=4915200\n",
-                   s_scene.kind,(unsigned long)s_frame,
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+            const char* name="BOX3D_PCSS_FRAME";
+#else
+            const char* name="BOX3D_KAWASE_FRAME";
+#endif
+            printf("%s,scene=%d,frame=%lu,physics_ticks=%lu,render_vsync_ticks=%lu,total_ticks=%lu,target60_ticks=4915200\n",
+                   name,s_scene.kind,(unsigned long)s_frame,
                    (unsigned long)b3Ps2DeltaCpuCycles(frameStart,physicsEnd),
                    (unsigned long)b3Ps2DeltaCpuCycles(physicsEnd,frameEnd),
                    (unsigned long)b3Ps2DeltaCpuCycles(frameStart,frameEnd));
         }
 #endif
         ++s_frame;
-#if defined(BOX3D_GS_PCF_SHADOWS)
+#if defined(BOX3D_GS_PCF_SHADOWS) && !defined(BOX3D_GS_PCSS_SHADOWS)
         // Independent runtime proof for testers capturing the GS display
         // without the upper HUD visible in screenshots.
         if(s_frame%240==0)

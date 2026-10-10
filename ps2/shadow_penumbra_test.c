@@ -8,7 +8,8 @@ int main(void)
     assert(b3Ps2ShadowRadius(0.0f,10.0f)==1);
     assert(b3Ps2ShadowRadius(-2.0f,10.0f)==1);
     assert(b3Ps2ShadowRadius(2.0f,10.0f)==3);
-    assert(b3Ps2ShadowRadius(4.0f,10.0f)==5);
+    assert(b3Ps2ShadowRadius(4.0f,10.0f)==4);
+    assert(b3Ps2ShadowRadius(5.0f,10.0f)==5);
     assert(b3Ps2ShadowRadius(400.0f,10.0f)==5);
     assert(b3Ps2ShadowRadius(1.0f,5.0f)==1);
     int total=0,nonzero=0;
