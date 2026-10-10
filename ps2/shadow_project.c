@@ -30,7 +30,7 @@ static int less(b3ShadowVec2 a,b3ShadowVec2 b)
 
 // Monotone chain convex hull of eight 2D points. The return winding is
 // consistently counterclockwise in (u,v), regardless of box orientation.
-static int convexHull(b3ShadowVec2 input[8],int count,
+static int convexHull(b3ShadowVec2 input[20],int count,
                       b3ShadowVec2 output[B3_SHADOW_MAX_VERTS])
 {
     for(int i=1;i<count;++i)
@@ -115,15 +115,44 @@ int b3ShadowProjectBox(const b3ShadowVec3 corners[8],
     // side of the plane. A backfacing receiver is never shaded.
     if(dn >= -0.00001f)return 0;
 
-    b3ShadowVec2 projected[8];
-    int n=0;
+    // First clip the caster cuboid against the receiver half-space.
+    // Keeping only its above-plane original vertices was incorrect: if
+    // the box interpenetrates the ground, the missing *edge-plane
+    // intersection* points can make the projected hull collapse or
+    // disappear entirely. A cuboid has 8 corners and 12 edges.
+    static const int edges[12][2]={
+        {0,1},{0,2},{0,4},{1,3},{1,5},{2,3},
+        {2,6},{3,7},{4,5},{4,6},{5,7},{6,7}
+    };
+    b3ShadowVec3 candidates[20];
+    float h[8];
+    int candidatesCount=0;
     for(int i=0;i<8;++i)
     {
-        b3ShadowVec3 delta=sub(corners[i],surface->origin);
+        h[i]=dot(sub(corners[i],surface->origin),surface->normal);
+        if(h[i]>=-0.00001f)
+            candidates[candidatesCount++]=corners[i];
+    }
+    for(int i=0;i<12;++i)
+    {
+        const int a=edges[i][0],b=edges[i][1];
+        if((h[a]>0.0f && h[b]<0.0f) ||
+           (h[b]>0.0f && h[a]<0.0f))
+        {
+            float t=h[a]/(h[a]-h[b]);
+            candidates[candidatesCount++]=add(corners[a],
+                                             mul(sub(corners[b],corners[a]),t));
+        }
+    }
+    if(candidatesCount<3)return 0;
+    b3ShadowVec2 projected[20];
+    int n=0;
+    for(int i=0;i<candidatesCount;++i)
+    {
+        b3ShadowVec3 delta=sub(candidates[i],surface->origin);
         float height=dot(delta,surface->normal);
-        if(height < -0.025f)continue; // vertex is below receiver plane
         float t=height>0.0f ? height/(-dn):0.0f;
-        b3ShadowVec3 p=add(corners[i],mul(lightRay,t));
+        b3ShadowVec3 p=add(candidates[i],mul(lightRay,t));
         b3ShadowVec3 relative=sub(p,surface->origin);
         float u=dot(relative,surface->axisU);
         float v=dot(relative,surface->axisV);

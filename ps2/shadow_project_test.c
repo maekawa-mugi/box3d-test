@@ -41,6 +41,13 @@ int main(void)
     // enlarging the footprint beyond the bottom-face-only projection.
     assert(b3ShadowProjectBox(points,v(-0.5f,-1,0),&floor,&shadow)>=4);
     assert(polygonArea(&shadow)>5.9f);
+    // Partly penetrating box: plane/edge intersections MUST contribute
+    // a whole contiguous shadow. The old implementation used only
+    // original above-ground corners, leaving triangular fragments.
+    cube(points,0,0.25f,0);
+    assert(b3ShadowProjectBox(points,v(-0.5f,-1,0),&floor,&shadow)>=4);
+    assert(polygonArea(&shadow)>4.0f);
+    cube(points,0,2,0);
     // Receiver-clipping check.
     b3ShadowReceiver small=floorAt(0.5f);
     assert(b3ShadowProjectBox(points,v(0,-1,0),&small,&shadow)==4);
