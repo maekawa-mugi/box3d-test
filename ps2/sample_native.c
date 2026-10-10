@@ -20,12 +20,20 @@
 #endif
 
 #include <kernel.h>
+#if defined(BOX3D_GS_PROGRESSIVE)
+#include "../shared/human.h"
+#endif
+#if defined(BOX3D_PS2_PAD_NAV)
+#include <sifrpc.h>
+#include <loadfile.h>
+#include <libpad.h>
+#endif
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 
 #if defined(BOX3D_GS_PROGRESSIVE)
-#define SCENE_COUNT 7
+#define SCENE_COUNT 8
 #else
 #define SCENE_COUNT 3
 #endif
@@ -54,6 +62,49 @@ typedef struct Scene
 
 static Scene s_scene;
 static uint32_t s_frame;
+#if defined(BOX3D_GS_PROGRESSIVE)
+static Human s_ragdoll;
+#endif
+#if defined(BOX3D_PS2_PAD_NAV)
+static _Alignas(64) unsigned char s_padBuffer[256];
+static uint16_t s_padHeld;
+static int s_padReady;
+static void pad_nav_init(void)
+{
+    sceSifInitRpc(0);
+    if(SifLoadModule("rom0:SIO2MAN",0,NULL)<0)
+        puts("BOX3D_PAD_WARN,SIO2MAN_load_failed");
+    if(SifLoadModule("rom0:PADMAN",0,NULL)<0)
+        puts("BOX3D_PAD_WARN,PADMAN_load_failed");
+    if(padInit(0)==0 || padPortOpen(0,0,s_padBuffer)==0)
+    {
+        puts("BOX3D_PAD_WARN,pad_not_available_auto_cycle_only");
+        return;
+    }
+    s_padReady=1;
+    puts("BOX3D_PAD_READY,LEFT=previous,RIGHT=next,edge_triggered=1");
+}
+// Return -1 / +1 on a new digital directional press only; no auto
+// repeat while held. Unplugging or initial probe never blocks physics.
+static int pad_nav_poll(void)
+{
+    if(!s_padReady)return 0;
+    int state=padGetState(0,0);
+    if(state!=PAD_STATE_STABLE && state!=PAD_STATE_FINDCTP1)
+    {
+        s_padHeld=0;
+        return 0;
+    }
+    struct padButtonStatus buttons;
+    if(!padRead(0,0,&buttons))return 0;
+    uint16_t held=(uint16_t)(~buttons.btns)&(PAD_LEFT|PAD_RIGHT);
+    uint16_t pressed=(uint16_t)(held&~s_padHeld);
+    s_padHeld=held;
+    if(pressed&PAD_LEFT)return -1;
+    if(pressed&PAD_RIGHT)return +1;
+    return 0;
+}
+#endif
 #if defined(BOX3D_GS_PROGRESSIVE)
 static unsigned s_culledFaces, s_emittedFaces;
 #endif
@@ -109,6 +160,9 @@ static void scene_create(int kind)
 {
     s_scene.count=0;
     s_scene.kind=kind;
+#if defined(BOX3D_GS_PROGRESSIVE)
+    s_ragdoll=(Human){0};
+#endif
     b3WorldDef wd=b3DefaultWorldDef();
     wd.workerCount=1;
     s_scene.world=b3CreateWorld(&wd);
@@ -286,6 +340,54 @@ static void scene_create(int kind)
                     0.7f,182,194,215);
         s_scene.camera=b3GsLookAt(pt(0,9,16),pt(0,2,0),225);
         puts("BOX3D_SAMPLE_SCENE,World/FarStack,column=6,offset_km=0");
+    }
+    else if(kind==7)
+    {
+        // Actual Ragdoll/Box setup from samples/sample_ragdoll.cpp:
+        // CreateHuman makes twelve Box3D capsule rigid bodies connected
+        // with revolute/spherical joints and collision-filter joints.
+        // The GS uses inexpensive cuboid proxies bound to the true
+        // physics bone bodies (not an unjointed falling-box imitation).
+        add_box(0,pt(0,-1,0),pt(20,1,20),identity,noSpin,
+                0.7f,175,182,184);
+        CreateHuman(&s_ragdoll,s_scene.world,(b3Pos){0,2,0},
+                    5.0f,1.0f,0.7f,1,NULL,false);
+        static const b3GsPoint3 boneHalf[bone_count]={
+            {0.18f,0.14f,0.13f}, // pelvis
+            {0.22f,0.21f,0.13f}, // spine 01
+            {0.23f,0.24f,0.13f}, // spine 03
+            {0.15f,0.16f,0.16f}, // neck/head
+            {0.105f,0.24f,0.11f}, // upper legs
+            {0.09f,0.24f,0.095f},
+            {0.105f,0.24f,0.11f},
+            {0.09f,0.24f,0.095f},
+            {0.1f,0.19f,0.10f}, // arms
+            {0.085f,0.19f,0.085f},
+            {0.1f,0.19f,0.10f},
+            {0.085f,0.19f,0.085f}
+        };
+        for(int i=0;i<bone_count;++i)
+        {
+            SceneBody* body=&s_scene.objects[s_scene.count++];
+            body->id=s_ragdoll.bones[i].bodyId;
+            body->half=boneHalf[i];
+            // Shirt, denim pants and skin-style palette.
+            if(i==bone_pelvis||i==bone_thigh_l||i==bone_calf_l||
+               i==bone_thigh_r||i==bone_calf_r)
+            {
+                body->r=81;body->g=135;body->b=184;
+            }
+            else if(i==bone_neck||i>=bone_upper_arm_l)
+            {
+                body->r=210;body->g=175;body->b=143;
+            }
+            else
+            {
+                body->r=76;body->g=173;body->b=162;
+            }
+        }
+        s_scene.camera=b3GsLookAt(pt(4.2f,5.0f,7.0f),pt(0,1.4f,0),260);
+        puts("BOX3D_SAMPLE_SCENE,Ragdoll/Box,bones=12,joints=11,origin=shared/human.c");
     }
 #endif
 #if defined(BOX3D_GS_PROGRESSIVE)
@@ -638,7 +740,8 @@ static void render_official_hud(void)
 #if defined(BOX3D_GS_PROGRESSIVE)
     const char* sceneNames[]={"BOX STACK","INCLINED PLANE",
                              "SPINNING BOOKS","RESTITUTION",
-                             "SLIDE TWIST","CONVEYOR BELT","FAR STACK"};
+                             "SLIDE TWIST","CONVEYOR BELT","FAR STACK",
+                             "RAGDOLL BOX"};
 #else
     const char* sceneNames[]={"BOX STACK","INCLINED PLANE","SPINNING BOOKS"};
 #endif
@@ -762,13 +865,29 @@ int main(void)
         puts("BOX3D_SAMPLE_FAIL,gs_initialization");
         for(;;) SleepThread();
     }
+#if defined(BOX3D_PS2_PAD_NAV)
+    pad_nav_init();
+#endif
     scene_create(0);
     for(;;)
     {
-        if(s_frame>0 && s_frame%SCENE_FRAMES==0)
+        int direction=0;
+#if defined(BOX3D_PS2_PAD_NAV)
+        direction=pad_nav_poll();
+#endif
+        if(direction!=0)
+        {
+            int newKind=(s_scene.kind+SCENE_COUNT+direction)%SCENE_COUNT;
+            b3DestroyWorld(s_scene.world);
+            scene_create(newKind);
+            s_frame=0; // full duration after manually changing scenes
+            printf("BOX3D_PAD_SCENE,dir=%d,scene=%d\n",direction,newKind);
+        }
+        else if(s_frame>0 && s_frame%SCENE_FRAMES==0)
         {
             b3DestroyWorld(s_scene.world);
             scene_create((s_scene.kind+1)%SCENE_COUNT);
+            s_frame=0;
         }
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
         uint32_t frameStart=b3Ps2ReadCpuCycles();
