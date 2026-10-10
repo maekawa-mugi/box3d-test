@@ -24,6 +24,14 @@ void b3GsLine3(b3GsCamera camera, b3GsPoint3 a, b3GsPoint3 b,
 // Built only into the separate BOX3D_GS_SOLID demonstration ELF.
 void b3GsTriangle3(b3GsCamera camera, b3GsPoint3 a, b3GsPoint3 b,
                    b3GsPoint3 c, uint8_t r, uint8_t g, uint8_t blue);
+// Official-demo-inspired ambient renderer, built only with
+// BOX3D_GS_OFFICIAL. Uses native GIF, no texture/gsKit/libdraw.
+void b3GsSkyGradient(void);
+void b3GsShadowBegin(void);
+void b3GsShadowEnd(void);
+void b3GsOverlayBegin(void);
+void b3GsOverlayPanel(int x,int y,int w,int h);
+void b3GsOverlayText(int x,int y,const char* text,uint8_t r,uint8_t g,uint8_t b);
 void b3GsPresent(void);
 b3GsCamera b3GsLookAt(b3GsPoint3 eye, b3GsPoint3 target, float focal);
 

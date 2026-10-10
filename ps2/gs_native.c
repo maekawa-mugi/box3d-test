@@ -14,7 +14,11 @@
 #include <stdio.h>
 
 typedef struct B3GsQword { uint64_t data, reg; } B3GsQword;
+#if defined(BOX3D_GS_OFFICIAL)
+#define B3_GS_QWORDS 8192
+#else
 #define B3_GS_QWORDS 2048
+#endif
 static _Alignas(64) B3GsQword s_packet[B3_GS_QWORDS];
 static unsigned s_used;
 static int s_framebuffer[2];
@@ -23,6 +27,9 @@ static int s_back = 1;
 static int s_zbuffer;
 #endif
 static int s_errors;
+#if defined(BOX3D_GS_OFFICIAL)
+static int s_shadowPass;
+#endif
 
 // Coordinates are signed screen pixels. We use XYOFFSET=2048.0 pixels
 // and add that same offset to the XY2 12.4 fixed-point vertices.
@@ -101,6 +108,9 @@ void b3GsBegin(void)
 {
     s_used = 1; // GIF packed A+D tag filled in during Present
     s_errors = 0;
+#if defined(BOX3D_GS_OFFICIAL)
+    s_shadowPass = 0;
+#endif
     b3GsAD(GS_SET_FRAME(s_framebuffer[s_back] >> 11, B3_PS2_GS_W >> 6, GS_PSM_32, 0),
            GS_REG_FRAME_1);
     b3GsAD(GS_SET_XYOFFSET(2048 << 4, 2048 << 4), GS_REG_XYOFFSET_1);
@@ -255,8 +265,13 @@ void b3GsTriangle3(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
     if(y0 < -256) y0 = -256; if(y1 < -256) y1 = -256; if(y2 < -256) y2 = -256;
     if(x0 > 576) x0 = 576; if(x1 > 576) x1 = 576; if(x2 > 576) x2 = 576;
     if(y0 > 480) y0 = 480; if(y1 > 480) y1 = 480; if(y2 > 480) y2 = 480;
+#if defined(BOX3D_GS_OFFICIAL)
+    b3GsAD(GS_SET_PRIM(3, 0, 0, 0, s_shadowPass ? 1 : 0, 0, 0, 0, 0), GS_REG_PRIM);
+    b3GsAD(GS_SET_RGBAQ(r,g,blue,s_shadowPass ? 0x50 : 0x80,0x3f800000),GS_REG_RGBAQ);
+#else
     b3GsAD(GS_SET_PRIM(3, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
     b3GsAD(GS_SET_RGBAQ(r,g,blue,0x80,0x3f800000),GS_REG_RGBAQ);
+#endif
     b3GsAD(b3GsXYZDepth(x0,y0,z0),GS_REG_XYZ2);
     b3GsAD(b3GsXYZDepth(x1,y1,z1),GS_REG_XYZ2);
     b3GsAD(b3GsXYZDepth(x2,y2,z2),GS_REG_XYZ2);
@@ -264,6 +279,159 @@ void b3GsTriangle3(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
     (void)c;(void)a;(void)b;(void)d;(void)r;(void)g;(void)blue;
 #endif
 }
+
+
+// Native PS2 GS aesthetic layer, approximating the official demo's
+// sky/sun/ground/GUI presentation without GPU shaders. The upstream
+// renderer uses Preetham sky, IBL, PBR, GTAO and cascade shadows; this
+// is deliberately a lightweight approximation with GS primitives.
+#if defined(BOX3D_GS_OFFICIAL)
+
+// A Gouraud-shaded screen-space triangle. The GS interpolates sky colors
+// per pixel (IIP=1) while Z=0 keeps the background behind 3D shapes.
+static void b3GsSkyTriangle(int x0,int y0,uint8_t r0,uint8_t g0,uint8_t b0,
+                            int x1,int y1,uint8_t r1,uint8_t g1,uint8_t b1,
+                            int x2,int y2,uint8_t r2,uint8_t g2,uint8_t b2)
+{
+    if(s_used+9>=B3_GS_QWORDS) { ++s_errors; return; }
+    b3GsAD(GS_SET_PRIM(3,1,0,0,0,0,0,0,0),GS_REG_PRIM);
+    b3GsAD(GS_SET_RGBAQ(r0,g0,b0,0x80,0x3f800000),GS_REG_RGBAQ);
+    b3GsAD(b3GsXYZ(x0,y0),GS_REG_XYZ2);
+    b3GsAD(GS_SET_RGBAQ(r1,g1,b1,0x80,0x3f800000),GS_REG_RGBAQ);
+    b3GsAD(b3GsXYZ(x1,y1),GS_REG_XYZ2);
+    b3GsAD(GS_SET_RGBAQ(r2,g2,b2,0x80,0x3f800000),GS_REG_RGBAQ);
+    b3GsAD(b3GsXYZ(x2,y2),GS_REG_XYZ2);
+}
+static void b3GsSkyBand(int y0,int y1,
+                         uint8_t r0,uint8_t g0,uint8_t b0,
+                         uint8_t r1,uint8_t g1,uint8_t b1)
+{
+    b3GsSkyTriangle(0,y0,r0,g0,b0,B3_PS2_GS_W,y0,r0,g0,b0,
+                    0,y1,r1,g1,b1);
+    b3GsSkyTriangle(B3_PS2_GS_W,y0,r0,g0,b0,
+                    B3_PS2_GS_W,y1,r1,g1,b1,0,y1,r1,g1,b1);
+}
+void b3GsSkyGradient(void)
+{
+    // Gradient from blue zenith to hazy daylight horizon, akin to
+    // upstream Preetham + AgX, but produced entirely by GS IIP.
+    b3GsSkyBand(0,104,80,137,190,155,188,206);
+    b3GsSkyBand(104,B3_PS2_GS_H,155,188,206,227,222,207);
+}
+
+void b3GsShadowBegin(void)
+{
+    // Blend semi-transparent hard-edged shadow geometry onto the ground.
+    // Stop writing depth, so overlapped shadows don't block other bodies.
+    s_shadowPass=1;
+    b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,1),GS_REG_ZBUF_1);
+    // (Cs-Cd)*As + Cd, source alpha 80/128 ~= 63% shadow darkening.
+    b3GsAD(GS_SET_ALPHA(0,1,0,1,0),GS_REG_ALPHA_1);
+}
+void b3GsShadowEnd(void)
+{
+    s_shadowPass=0;
+    b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,0),GS_REG_ZBUF_1);
+}
+
+// HUD is 2D GS sprite pixel glyphs, not BIOS scr_printf or a texture.
+// Z test is disabled only after rendering all world geometry.
+void b3GsOverlayBegin(void)
+{
+    b3GsAD(GS_SET_TEST(0,0,0,0,0,0,0,0),GS_REG_TEST_1);
+    b3GsAD(GS_SET_ALPHA(0,1,0,1,0),GS_REG_ALPHA_1);
+}
+void b3GsOverlayPanel(int x,int y,int width,int height)
+{
+    if(s_used+5>=B3_GS_QWORDS) { ++s_errors; return; }
+    b3GsAD(GS_SET_PRIM(6,0,0,0,1,0,0,0,0),GS_REG_PRIM);
+    b3GsAD(GS_SET_RGBAQ(15,24,36,93,0x3f800000),GS_REG_RGBAQ);
+    b3GsAD(b3GsXYZ(x,y),GS_REG_XYZ2);
+    b3GsAD(b3GsXYZ(x+width,y+height),GS_REG_XYZ2);
+}
+
+// Minimal 5x7 uppercase HUD glyphs. Packed left-to-right, bit4 first.
+// Spaces and unsupported letters are left blank.
+static const uint8_t s_font[36][7]={
+    {14,17,17,31,17,17,17}, // A
+    {30,17,17,30,17,17,30}, // B
+    {14,17,16,16,16,17,14}, // C
+    {30,17,17,17,17,17,30}, // D
+    {31,16,16,30,16,16,31}, // E
+    {31,16,16,30,16,16,16}, // F
+    {14,17,16,23,17,17,14}, // G
+    {17,17,17,31,17,17,17}, // H
+    {31,4,4,4,4,4,31}, // I
+    {7,2,2,2,18,18,12}, // J
+    {17,18,20,24,20,18,17}, // K
+    {16,16,16,16,16,16,31}, // L
+    {17,27,21,21,17,17,17}, // M
+    {17,25,21,19,17,17,17}, // N
+    {14,17,17,17,17,17,14}, // O
+    {30,17,17,30,16,16,16}, // P
+    {14,17,17,17,21,18,13}, // Q
+    {30,17,17,30,20,18,17}, // R
+    {15,16,16,14,1,1,30}, // S
+    {31,4,4,4,4,4,4}, // T
+    {17,17,17,17,17,17,14}, // U
+    {17,17,17,17,17,10,4}, // V
+    {17,17,17,21,21,21,10}, // W
+    {17,17,10,4,10,17,17}, // X
+    {17,17,10,4,4,4,4}, // Y
+    {31,1,2,4,8,16,31}, // Z
+    {14,17,19,21,25,17,14}, // 0
+    {4,12,4,4,4,4,14}, // 1
+    {14,17,1,2,4,8,31}, // 2
+    {30,1,1,14,1,1,30}, // 3
+    {2,6,10,18,31,2,2}, // 4
+    {31,16,30,1,1,17,14}, // 5
+    {7,8,16,30,17,17,14}, // 6
+    {31,1,2,4,8,8,8}, // 7
+    {14,17,17,14,17,17,14}, // 8
+    {14,17,17,15,1,2,28} // 9
+};
+void b3GsOverlayText(int x,int y,const char* text,uint8_t r,uint8_t g,uint8_t b)
+{
+    if(text==NULL) return;
+    b3GsAD(GS_SET_PRIM(6,0,0,0,0,0,0,0,0),GS_REG_PRIM);
+    b3GsAD(GS_SET_RGBAQ(r,g,b,0x80,0x3f800000),GS_REG_RGBAQ);
+    for(const unsigned char* cp=(const unsigned char*)text;*cp;++cp)
+    {
+        unsigned ch=*cp;
+        int glyph=-1;
+        if(ch>='a' && ch<='z') ch -= 32;
+        if(ch>='A' && ch<='Z') glyph=(int)(ch-'A');
+        if(ch>='0' && ch<='9') glyph=(int)(ch-'0'+26);
+        if(glyph>=0)
+        {
+            for(int row=0;row<7;++row)
+            {
+                unsigned mask=s_font[glyph][row];
+                for(int col=0;col<5;++col)
+                {
+                    if(mask & (1u << (4-col)))
+                    {
+                        if(s_used+3>=B3_GS_QWORDS){++s_errors;return;}
+                        b3GsAD(b3GsXYZ(x+col,y+row),GS_REG_XYZ2);
+                        b3GsAD(b3GsXYZ(x+col+1,y+row+1),GS_REG_XYZ2);
+                    }
+                }
+            }
+        }
+        x+=6;
+        if(x>B3_PS2_GS_W-6)break;
+    }
+}
+#else
+void b3GsSkyGradient(void){}
+void b3GsShadowBegin(void){}
+void b3GsShadowEnd(void){}
+void b3GsOverlayBegin(void){}
+void b3GsOverlayPanel(int x,int y,int w,int h)
+{(void)x;(void)y;(void)w;(void)h;}
+void b3GsOverlayText(int x,int y,const char* t,uint8_t r,uint8_t g,uint8_t b)
+{(void)x;(void)y;(void)t;(void)r;(void)g;(void)b;}
+#endif
 
 void b3GsPresent(void)
 {
