@@ -31,6 +31,10 @@ static _Alignas(64) uint64_t s_gifTag[2];
 static b3GsCamera s_currentCamera;
 static int s_count;
 static int s_ready;
+static unsigned s_submissionCount;
+// PS2SDK dma_channel_wait(timeout=0) never terminates on a stalled VIF.
+// The finite timeout is an emergency diagnostic, not a hardware recovery.
+enum { B3_VU1_DMA_WAIT_LIMIT=50000000 };
 
 // The VIF UNPACK_V4_32 source count is measured in 16-byte quadwords.
 // Check the R5900 ABI, not only the host C17 layout regression test.
@@ -74,8 +78,14 @@ int b3Vu1BoxesInit(void)
                                  &B3Vu1Boxes_CodeEnd);
     packet2_utils_vu_add_end_tag(startup);
     dma_channel_send_packet2(startup,DMA_CHANNEL_VIF1,1);
-    dma_channel_wait(DMA_CHANNEL_VIF1,0);
+    int startupWait=dma_channel_wait(DMA_CHANNEL_VIF1,
+                                     B3_VU1_DMA_WAIT_LIMIT);
     packet2_free(startup);
+    if(startupWait<0)
+    {
+        puts("BOX3D_VU1_FAIL,microcode_upload_timeout");
+        return 0;
+    }
 
     int k=0;
     for(int face=0;face<6;++face)
@@ -102,7 +112,11 @@ int b3Vu1BoxesInit(void)
     packet2_utils_vu_add_unpack_data(s_vifPacket,256,s_gifTag,1,0);
     packet2_utils_vu_add_end_tag(s_vifPacket);
     dma_channel_send_packet2(s_vifPacket,DMA_CHANNEL_VIF1,1);
-    dma_channel_wait(DMA_CHANNEL_VIF1,0);
+    if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    {
+        puts("BOX3D_VU1_FAIL,static_data_upload_timeout");
+        return 0;
+    }
     s_ready=1;
     puts("BOX3D_VU1_READY,vif1_dma=1,vu1_micro=1,xgkick=1,triangles_per_box=12");
     return 1;
@@ -223,7 +237,18 @@ int b3Vu1BoxesSubmit(void)
     packet2_vif_nop(s_vifPacket,0);
     packet2_chain_close_tag(s_vifPacket);
     packet2_utils_vu_add_end_tag(s_vifPacket);
+    if(s_submissionCount<3)
+        printf("BOX3D_VU1_PHASE,before_vif1_dma,boxes=%d,qwords=%u\n",
+               s_count,(unsigned)packet2_get_qw_count(s_vifPacket));
     dma_channel_send_packet2(s_vifPacket,DMA_CHANNEL_VIF1,1);
-    dma_channel_wait(DMA_CHANNEL_VIF1,0);
+    if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    {
+        puts("BOX3D_VU1_FAIL,vif1_dma_timeout");
+        s_ready=0;
+        return -1;
+    }
+    if(s_submissionCount<3)
+        puts("BOX3D_VU1_PHASE,after_vif1_dma");
+    ++s_submissionCount;
     return s_count;
 }

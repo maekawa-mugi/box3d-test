@@ -21,6 +21,11 @@ B3Vu1Boxes_CodeStart:
         NOP                                iaddiu      VI07,VI00,24
 vu1_vertex_loop:
         NOP                                lqi         VF05,(VI01++)
+        ; Explicit load/use spacing: lqi result must be visible in
+        ; the upper pipeline before the matrix multiply reads VF05.
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
         mulax      ACC,VF01,VF05x          NOP
         madday     ACC,VF02,VF05y          NOP
         maddaz     ACC,VF03,VF05z          NOP
@@ -49,6 +54,10 @@ vu1_vertex_loop:
 vu1_emit_loop:
         NOP                                ilw.x       VI08,0(VI04)
         NOP                                ilw.y       VI09,0(VI04)
+        ; VI08/VI09 originate from VU DMEM and require load spacing.
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
         NOP                                iaddiu      VI10,VI08,32
         NOP                                iaddiu      VI11,VI09,24
         NOP                                lq          VF09,0(VI10)
@@ -56,6 +65,7 @@ vu1_emit_loop:
         NOP                                sqi         VF10,(VI06++)
         NOP                                sqi         VF09,(VI06++)
         NOP                                iaddiu      VI04,VI04,1
+        NOP                                NOP
         NOP                                ibne        VI04,VI12,vu1_emit_loop
         NOP                                NOP
         NOP                                xgkick      VI05

@@ -433,3 +433,36 @@ Compare 256 and 400 boxes with the same `shadow_mode` and substeps,
 toggle TRIANGLE to compare EE and VU1 and confirm that the PCSS
 penumbra remains unchanged. The `vu1_boxes_layout_test.c` host test
 checks ABI and projection constants but cannot verify VU opcodes.
+
+## 2026-10-10: VU1 blackout recovery and staged diagnosis
+
+A PCSX2 user reported an immediate black screen upon entering the stress
+scenes with the first automatically-enabled VU1 path. A VIF1/GIF hang
+is one likely cause, but the cause is **not yet confirmed** without
+the emulator's EE console and a one-box reproduction.
+
+To keep all pages usable, the demo now **starts with the established
+EE rendering path** in every scene. On stress pages (9-12), press
+TRIANGLE to cycle the number of boxes using VU1:
+
+- D0: EE-only (safe default).
+- D1: one box via VIF1 + VU1 + XGKICK; all other boxes via EE.
+- D8: eight boxes via VU1, the rest via EE.
+- D400: as many boxes as can be queued, up to 400, via VU1.
+- Next press: D0 again.
+
+The HUD page shows D0/D1/D8/D400. The EE console reports
+`BOX3D_VU1_PHASE` before and after the PATH3 flush and the VIF1
+DMA submit. SDK DMA waits now use a finite guard count and log
+`BOX3D_VU1_FAIL,vif1_dma_timeout` rather than spinning forever at the
+EE dma_channel_wait call. **A hung VU1/GIF can still stall the hardware
+even after the DMA guard expires**. Power-cycle/restart PCSX2 when
+testing a failing D1 step. The VU1 microprogram now has conservative
+load/use scheduling for VU float and integer loads.
+
+Recommended validation: first verify PCSS and all four stress pages
+run in D0. Then enter D1 on BENCH 64 and copy the last
+`BOX3D_VU1_PHASE` line if the screen freezes. Only advance to D8 and
+D400 after the earlier level visibly runs for several frames. Compare
+DRAW/PHYS against the same scene with D0. A black screen is **not
+treated as solved** until PCSX2 confirms VU1 output.
