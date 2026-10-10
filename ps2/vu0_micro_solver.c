@@ -2,6 +2,7 @@
 // VU0 micro-mode contact probe. The existing Box3D solver stays unchanged
 // until PCSX2 verifies this actual VCALLMS path and its numeric outputs.
 #include "vu0_micro_solver.h"
+#include "vu0_mmio_transfer.h"
 #include "../src/ps2_vu0.h"
 
 #include <stddef.h>
@@ -111,47 +112,38 @@ int b3Vu0MicroVerify(void)
     return 1;
 }
 
-static int b3Vu0MicroRunBlock(b3Vu0MicroBlock* block,unsigned groups)
+// The caller supplies aligned SIMD4 records in its own RAM. Transfer
+// directly to volatile VU0 DMEM, avoiding the prior memcpy into an
+// intermediate 3344-byte block on each live submission.
+static int b3Vu0MicroRunRecords(const void* inputs,void* outputs,unsigned groups)
 {
-    if(!s_verified || groups==0 || groups>B3_VU0_MICRO_GROUPS)
-        return 0;
+    if(!s_verified || !inputs || !outputs ||
+       groups==0 || groups>B3_VU0_MICRO_GROUPS)return 0;
     if(!b3Vu0WaitIdle())
     {
         s_verified=0;
         s_status="VU0 FAIL BUSY";
         return 0;
     }
-    // DMA is not required for VU0: the mapped 4KB VU0 data window
-    // contains a bounded control QW followed by N 13-QW records.
-    block->control[0]=groups;
-    const uint32_t* in=(const uint32_t*)block;
-    volatile uint32_t* vu=B3_VU0_DATA_BASE;
-    // Only transfer the control and eight input QWs per record.
-    // Five output QWs are wholly written by VU0; copying stale EE
-    // output data to DMEM wastes 20 MMIO writes for each SIMD4 group.
-    for(unsigned i=0;i<4u;++i)vu[i]=in[i];
-    for(unsigned g=0;g<groups;++g)
-    {
-        size_t start=4u+g*B3_VU0_MICRO_RECORD_QWS*4u;
-        for(unsigned i=0;i<B3_VU0_MICRO_INPUT_QWS*4u;++i)
-            vu[start+i]=in[start+i];
-    }
+    b3Vu0PushRecordInputs(B3_VU0_DATA_BASE,inputs,groups);
     __asm__ __volatile__("sync.l" ::: "memory");
     __asm__ __volatile__("vcallms 0" ::: "memory");
+    // Dependent contact impulses cannot be consumed before VU0 stops.
+    // Keep one mandatory completion wait; no speculative VU1/GIF use.
     if(!b3Vu0WaitIdle())
     {
         s_verified=0;
         s_status="VU0 FAIL EXEC TIMEOUT";
         return 0;
     }
-    // No need to read input back: only five output QWs per group.
-    uint32_t* out=(uint32_t*)block;
-    for(unsigned g=0;g<groups;++g)
-    {
-        const size_t index=4u+g*B3_VU0_MICRO_RECORD_QWS*4u+8u*4u;
-        for(unsigned i=0;i<20u;++i)out[index+i]=vu[index+i];
-    }
+    b3Vu0PullRecordOutputs(outputs,B3_VU0_DATA_BASE,groups);
     return 1;
+}
+
+static int b3Vu0MicroRunBlock(b3Vu0MicroBlock* block,unsigned groups)
+{
+    block->control[0]=groups;
+    return b3Vu0MicroRunRecords(block->record,block->record,groups);
 }
 
 int b3Vu0MicroIsReady(void){return s_verified;}
@@ -166,8 +158,7 @@ int b3Vu0MicroNormalSolve4(b3Ps2VU0NormalSolveData* record)
 {
     if(!record || !s_verified)return -1;
     if(s_stepCalls>=B3_VU0_MICRO_MAX_LIVE_PER_STEP)return 0;
-    memcpy(&s_microData.record[0],record,sizeof(*record));
-    if(!b3Vu0MicroRunBlock(&s_microData,1u))return -1;
+    if(!b3Vu0MicroRunRecords(record,s_microData.record,1u))return -1;
     // Validate real moving-contact inputs on startup, rather than
     // trusting a differential probe made only from binary fractions.
     // The comparison is bounded: first 64 calls and one every 1024.
@@ -210,7 +201,8 @@ int b3Vu0MicroNormalSolve4(b3Ps2VU0NormalSolveData* record)
             }
         }
     }
-    memcpy(record,&s_microData.record[0],sizeof(*record));
+    memcpy(&record->newImpulse,&s_microData.record[0].newImpulse,
+           B3_VU0_MICRO_OUTPUT_QWS*16u);
     ++s_liveCalls;
     ++s_liveGroups;
     ++s_stepCalls;
@@ -228,9 +220,7 @@ int b3Vu0MicroNormalSolveBatch(b3Ps2VU0NormalSolveData* records,
     if(!records || !s_verified || groups==0u ||
        groups>B3_VU0_MICRO_GROUPS)return -1;
     if(s_batchCalls>=B3_VU0_MICRO_MAX_BATCHES_PER_STEP)return 0;
-    for(unsigned g=0;g<groups;++g)
-        memcpy(&s_microData.record[g],&records[g],sizeof(records[g]));
-    if(!b3Vu0MicroRunBlock(&s_microData,groups))return -1;
+    if(!b3Vu0MicroRunRecords(records,s_microData.record,groups))return -1;
 
     // Full EE numerical comparison during early live calls and every
     // 256th call. Otherwise only check finiteness to avoid reproducing
@@ -284,7 +274,8 @@ int b3Vu0MicroNormalSolveBatch(b3Ps2VU0NormalSolveData* records,
     }
 
     for(unsigned g=0;g<groups;++g)
-        memcpy(&records[g],&s_microData.record[g],sizeof(records[g]));
+        memcpy(&records[g].newImpulse,&s_microData.record[g].newImpulse,
+               B3_VU0_MICRO_OUTPUT_QWS*16u);
     ++s_liveCalls;
     ++s_batchCalls;
     s_liveGroups+=groups;

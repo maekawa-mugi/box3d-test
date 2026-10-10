@@ -2,6 +2,7 @@
 // Host regression: VU0 4-lane/16-record DMEM ABI and scalar math contract.
 // This test does NOT execute PS2 microcode; PCSX2 runs the real differential.
 #include "vu0_micro_solver.h"
+#include "vu0_mmio_transfer.h"
 #include "../src/ps2_vu0.h"
 #include <assert.h>
 #include <math.h>
@@ -70,6 +71,45 @@ int main(void)
                          (r->oldTwistLimit[l]+r->leverArm[l]*next))<0.00001f);
         }
     }
-    puts("PASS: 16x4 VU0 micro DMEM ABI and 64 scalar differential batches");
+    // Simulate the real transfer on volatile MMIO storage. Assert only
+    // active inputs/control are uploaded and only outputs are read back.
+    // Tests the scalar host fallback for the same exact QW boundaries
+    // used by the R5900 LQ/SQ path; not proof of real MMIO timing.
+    for(unsigned groups=1;groups<=B3_VU0_MICRO_GROUPS;groups+=groups==1?2:3)
+    {
+        _Alignas(16) volatile uint32_t vu[B3_VU0_MICRO_TOTAL_QWS*4u];
+        _Alignas(16) b3Vu0MicroBlock source={0},received={0};
+        const uint32_t marker=0x7aa517e5u;
+        for(unsigned i=0;i<B3_VU0_MICRO_TOTAL_QWS*4u;++i)vu[i]=marker;
+        for(unsigned g=0;g<B3_VU0_MICRO_GROUPS;++g)
+        {
+            uint32_t* words=(uint32_t*)&source.record[g];
+            for(unsigned i=0;i<B3_VU0_MICRO_RECORD_QWS*4u;++i)
+                words[i]=0x51000000u+(g<<8)+i;
+        }
+        b3Vu0PushRecordInputs(vu,source.record,groups);
+        assert(vu[0]==groups);
+        for(unsigned g=0;g<B3_VU0_MICRO_GROUPS;++g)
+        {
+            size_t start=4u+g*B3_VU0_MICRO_RECORD_QWS*4u;
+            const uint32_t* src=(const uint32_t*)&source.record[g];
+            for(unsigned i=0;i<B3_VU0_MICRO_RECORD_QWS*4u;++i)
+                assert(vu[start+i]==(g<groups&&i<32u?src[i]:marker));
+            if(g<groups)
+            {
+                for(unsigned i=32;i<52u;++i)
+                    vu[start+i]=src[i]^0xabcdef01u;
+            }
+        }
+        b3Vu0PullRecordOutputs(received.record,vu,groups);
+        for(unsigned g=0;g<B3_VU0_MICRO_GROUPS;++g)
+        {
+            const uint32_t* dst=(const uint32_t*)&received.record[g];
+            const uint32_t* src=(const uint32_t*)&source.record[g];
+            for(unsigned i=0;i<52u;++i)
+                assert(dst[i]==(g<groups&&i>=32u?(src[i]^0xabcdef01u):0u));
+        }
+    }
+    puts("PASS: 16x4 VU0 micro DMEM ABI, 64 scalar differential batches, MMIO layout");
     return 0;
 }

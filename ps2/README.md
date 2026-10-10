@@ -1197,3 +1197,38 @@ normal-contact ordering and VU1/GIF path are unchanged.
 An apples-to-apples runtime comparison needs matching contact counts
 and box states. The PS2 toolchain and PCSX2 performance/accuracy remain
 unverified for this optimization.
+
+## VU0 EE transfer and launch-count reduction (MMIO aligned QWs)
+
+Based on the R5900 aligned `LQ/SQ` hot-path technique studied in
+[ps2-libc-arena](https://github.com/maekawa-mugi/ps2-libc-arena)
+(`ee_hand_memcpy.S` / `ee_fast_memcpy.S`), the native solver now
+uses an **MMIO-specific 128-bit transfer**, not an overriding libc.
+The EE source/destination records and the 0x11004000 VU0 DMEM window
+are 16-byte aligned by ABI. Eight input QWs and five output QWs per
+active SIMD4 group are transferred with aligned quadword instructions.
+The control count uses a single 32-bit write. The micro kernel itself
+and its 13-QW record layout are unchanged.
+
+Live calls now write the original caller's inputs directly to VU0
+DMEM, and copy only the five validated output QWs back to the caller.
+This eliminates two full 208-byte intermediate record copies per group.
+Host ABI tests cover group counts 1..16, inactive-group guard words,
+output-only downloads and control placement. The portable host path
+uses volatile 32-bit words, while R5900 uses `LQ/SQ`. The build-time
+`B3_VU0_FORCE_WORD_MMIO=1` switch restores the old scalar MMIO route
+if a specific hardware revision does not support the quadword path.
+
+In VU0 micro mode only, the graph-colored wide-constraint solver's
+minimum work block increases from 4 to 16 groups on the single EE
+worker. This allows a single VCALLMS to process more independent
+contact groups within one color, reducing synchronization count
+without batching dependent points, crossing colors, or changing
+VU1/GIF PATH1/PATH3 ordering. Each batch still waits for completion
+before applying dependent body velocities. The original 4-group
+block size remains for EE scalar and other contact types.
+
+**Not yet verified:** native R5900 compilation, PCSX2/console MMIO
+`LQ/SQ` correctness, actual VCALLMS/group utilization, timing and
+60 FPS. The libc-arena screen is a RAM-to-RAM memcpy microbenchmark
+and is not proof of MMIO transfer speedup.

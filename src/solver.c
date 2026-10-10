@@ -20,6 +20,9 @@
 #include "sensor.h"
 #include "shape.h"
 #include "solver_set.h"
+#if defined( BOX3D_PS2 )
+#include "ps2_vu0.h"
+#endif
 
 #include <limits.h>
 #include <stddef.h>
@@ -1503,6 +1506,16 @@ void b3Solve( b3World* world, b3StepContext* stepContext )
 
 		const int minContactsPerBlock = 4;
 		const int minJointsPerBlock = 4;
+		int minWideContactsPerBlock = minContactsPerBlock;
+#if defined( BOX3D_PS2 )
+		// Native PS2 uses one EE solver worker. Packing four SIMD4
+		// constraints per task caused needless small VCALLMS batches.
+		// A color's convex contacts are independent, so allow up to
+		// 16 records per VU0 invocation without crossing color borders.
+		// Other modes, mesh, prepare and store retain their old blocks.
+		if ( workerCount == 1 && b3Ps2GetVU0Enabled() == 6 )
+			minWideContactsPerBlock = 16;
+#endif
 
 		// Configure blocks for tasks parallel-for each active graph color
 		// The blocks are a mix of convex contact, mesh contact, and joint blocks
@@ -1552,7 +1565,7 @@ void b3Solve( b3World* world, b3StepContext* stepContext )
 			jointCount += colorJointCount;
 
 			// Solver block dimensions
-			graphWideContactDims[c] = b3ComputeBlockCount( colorWideConstraintCount, minContactsPerBlock, maxBlockCount );
+			graphWideContactDims[c] = b3ComputeBlockCount( colorWideConstraintCount, minWideContactsPerBlock, maxBlockCount );
 			graphMeshContactDims[c] = b3ComputeBlockCount( colorMeshGroupCount, minContactsPerBlock, maxBlockCount );
 			graphJointDims[c] = b3ComputeBlockCount( colorJointCount, minJointsPerBlock, maxBlockCount );
 			graphBlockCount += graphWideContactDims[c].count + graphMeshContactDims[c].count + graphJointDims[c].count;
