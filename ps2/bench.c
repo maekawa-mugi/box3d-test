@@ -824,12 +824,13 @@ int main( void )
     screen_line( vu0Line );
     vu0_shared_kernel_check();
     vu0_normal_kernel_check();
-    vu0_arithmetic_probe();
     // Keep the useful final A/B scene rows on screen regardless of how
     // many earlier correctness/microbenchmark lines were printed.
     scr_clear();
     screen_line( "VU0 physics A/B: COP1, pair, extended, shared" );
-    screen_line( "ALU probe is in stdout (see BOX3D_VU0_ALU_PROBE)" );
+    // Include the compute-only issue-rate result in the *final* GS page;
+    // relying on stdout would hide it from screenshot-only PCSX2 testers.
+    vu0_arithmetic_probe();
     vu0_scene_benchmark( "single eight-box", 2, 2, 0, 1 );
     vu0_scene_benchmark( "single 32-box", 4, 2, 0, 1 );
     vu0_scene_benchmark( "paired eight-box", 2, 2, 0, 2 );
