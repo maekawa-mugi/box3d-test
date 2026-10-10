@@ -169,3 +169,24 @@ instead of falling back into the loader. Results are also emitted as
 `BOX3D_STAGE`, `BOX3D_RESULT`, `BOX3D_PASS` and `BOX3D_FAIL`
 for automated serial-log collection. On the PS2 this program intentionally
 never exits so a launcher cannot erase the display.
+
+## VU0 pipeline/transfer diagnostic
+
+The first PCSX2 VU0 trial passed numerical correctness but had poor
+throughput: COP1 20 vs VU0 126 ticks for one `b3DotW4` and roughly 0.99x
+whole-physics throughput. Packing six independent float4 values into a
+112-byte record plus a function call and seven COP2 transfers for *one* dot
+is the critical structural problem, not evidence that VU0's ALU is slower.
+
+`BOX3D_VU0_BATCH` now reports three timings for **four dot4 records**:
+COP1 scalar, four separate VU0 calls, and the new VU0 batch4 kernel.
+The batch kernel arranges independent VMUL operations before their VADD
+consumers and avoids four separate external calls. Check the three cycle
+numbers and correctness on PCSX2 before widening the solver. This is
+a standalone throughput experiment; the live solver still uses the
+single-dot VU0 path and remains OFF by default.
+
+Further optimization needs contact-solver data-flow batching so that many
+operations stay in VF registers instead of paying LQC2/SQC2 transfers
+for each temporary. A batch microbenchmark alone does not speed up
+`b3World_Step`. Raw PCSX2 counts are not real PS2 hardware timing.

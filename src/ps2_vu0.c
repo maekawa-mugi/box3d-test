@@ -15,6 +15,8 @@ _Static_assert( offsetof(b3Ps2VU0Dot4Data, az) == 64, "VU0 az offset" );
 _Static_assert( offsetof(b3Ps2VU0Dot4Data, bz) == 80, "VU0 bz offset" );
 _Static_assert( offsetof(b3Ps2VU0Dot4Data, out) == 96, "VU0 output offset" );
 
+_Static_assert( sizeof(b3Ps2VU0Dot4Data) % 16 == 0, "VU0 record stride" );
+
 static int s_vu0Enabled;
 
 void b3Ps2SetVU0Enabled( int enabled )
@@ -59,6 +61,44 @@ void b3Ps2VU0Dot4( b3Ps2VU0Dot4Data* data )
         data->out[lane] = (data->ax[lane] * data->bx[lane] +
                            data->ay[lane] * data->by[lane]) +
                           data->az[lane] * data->bz[lane];
+    }
+#endif
+}
+
+// Four independent dot4 records. The block structure allows multiple
+// VU0 multiplies to be issued before consuming their products, without
+// round-tripping intermediate floats through EE COP1. The first product
+// is not read immediately after its VMUL (issue distance through the
+// second VMUL and subsequent load), and the third product is computed
+// before the first VADD. See EE VU0 pipeline/manual restrictions.
+//
+// Keep VF1..VF10 private. Unrolling avoids short backward branch loops.
+// Scratch is 16-byte aligned and record stride is exactly 112 bytes.
+void b3Ps2VU0Dot4Batch4( b3Ps2VU0Dot4Data data[4] )
+{
+#if defined(BOX3D_PS2) && (defined(__mips__) || defined(__mips))
+    for (int i = 0; i < 4; ++i)
+    {
+        float* row = data[i].ax;
+        __asm__ __volatile__(
+            "lqc2 $vf1, 0(%0)\n\t"
+            "lqc2 $vf2, 16(%0)\n\t"
+            "lqc2 $vf3, 32(%0)\n\t"
+            "lqc2 $vf4, 48(%0)\n\t"
+            "vmul.xyzw $vf7, $vf1, $vf2\n\t"
+            "lqc2 $vf5, 64(%0)\n\t"
+            "lqc2 $vf6, 80(%0)\n\t"
+            "vmul.xyzw $vf8, $vf3, $vf4\n\t"
+            "vmul.xyzw $vf9, $vf5, $vf6\n\t"
+            "vadd.xyzw $vf7, $vf7, $vf8\n\t"
+            "vadd.xyzw $vf7, $vf7, $vf9\n\t"
+            "sqc2 $vf7, 96(%0)"
+            : : "r"(row) : "memory" );
+    }
+#else
+    for (int i = 0; i < 4; ++i)
+    {
+        b3Ps2VU0Dot4( &data[i] );
     }
 #endif
 }

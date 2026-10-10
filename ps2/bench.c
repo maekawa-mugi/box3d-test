@@ -326,6 +326,100 @@ static uint64_t vu0_micro_sample( int enabled )
     return ticks;
 }
 
+
+static void vu0_batch_benchmark( void )
+{
+    // This measures throughput of 16 independent 3D dot products (4xW4)
+    // batched, vs four one-record calls and a portable scalar loop. Inputs,
+    // outputs, and FP association are identical. Run scalar baseline and
+    // both VU0 variants on the *same* aligned dataset.
+    b3Ps2VU0Dot4Data batch[4];
+    b3Ps2VU0Dot4Data one[4];
+    b3Ps2VU0Dot4Data scalar[4];
+    for ( int i = 0; i < 4; ++i )
+    {
+        for ( int k = 0; k < 4; ++k )
+        {
+            float x = 0.25f * (float)( 1 + i * 4 + k );
+            batch[i].ax[k] = x;
+            batch[i].ay[k] = x * 1.25f;
+            batch[i].az[k] = -x * 0.5f;
+            batch[i].bx[k] = x * 0.375f;
+            batch[i].by[k] = -x * 0.125f;
+            batch[i].bz[k] = x * 0.75f;
+        }
+    }
+    memcpy( one, batch, sizeof(batch) );
+    memcpy( scalar, batch, sizeof(batch) );
+    for ( int i = 0; i < 4; ++i )
+    {
+        for ( int k = 0; k < 4; ++k )
+        {
+            scalar[i].out[k] =
+                (scalar[i].ax[k] * scalar[i].bx[k] +
+                 scalar[i].ay[k] * scalar[i].by[k]) +
+                 scalar[i].az[k] * scalar[i].bz[k];
+        }
+        b3Ps2VU0Dot4( &one[i] );
+    }
+    b3Ps2VU0Dot4Batch4( batch );
+    for ( int i = 0; i < 4; ++i )
+    {
+        for ( int k = 0; k < 4; ++k )
+        {
+            float expected = scalar[i].out[k];
+            float tolerance = 0.0005f + 0.00005f * fabsf(expected);
+            if ( !isfinite(batch[i].out[k]) ||
+                 fabsf( batch[i].out[k] - expected ) > tolerance ||
+                 fabsf( one[i].out[k] - expected ) > tolerance )
+            {
+                screen_stop( "VU0 batch4 mismatch" );
+            }
+        }
+    }
+
+    const int iterations = 256;
+    uint64_t scalarTicks = 0, singleTicks = 0, batchTicks = 0;
+    volatile float checksum = 0.0f;
+    for ( int repeat = 0; repeat < iterations; ++repeat )
+    {
+        uint32_t t0 = b3Ps2ReadCpuCycles();
+        for ( int i = 0; i < 4; ++i )
+        {
+            // Anti-hoisting: read and sum all scalar answers.
+            for ( int k = 0; k < 4; ++k )
+            {
+                scalar[i].out[k] =
+                    (scalar[i].ax[k] * scalar[i].bx[k] +
+                     scalar[i].ay[k] * scalar[i].by[k]) +
+                     scalar[i].az[k] * scalar[i].bz[k];
+            }
+        }
+        scalarTicks += b3Ps2DeltaCpuCycles( t0, b3Ps2ReadCpuCycles() );
+
+        t0 = b3Ps2ReadCpuCycles();
+        for ( int i = 0; i < 4; ++i ) b3Ps2VU0Dot4( &one[i] );
+        singleTicks += b3Ps2DeltaCpuCycles( t0, b3Ps2ReadCpuCycles() );
+
+        t0 = b3Ps2ReadCpuCycles();
+        b3Ps2VU0Dot4Batch4( batch );
+        batchTicks += b3Ps2DeltaCpuCycles( t0, b3Ps2ReadCpuCycles() );
+        checksum += scalar[repeat & 3].out[0] + one[repeat & 3].out[0] +
+                    batch[repeat & 3].out[0];
+    }
+    char display[160];
+    snprintf(display,sizeof(display),
+             "VU0 x4: COP1 %llu, single %llu, batch %llu cycles",
+             (unsigned long long)(scalarTicks/iterations),
+             (unsigned long long)(singleTicks/iterations),
+             (unsigned long long)(batchTicks/iterations));
+    screen_line(display);
+    printf("BOX3D_VU0_BATCH,scalar=%llu,single=%llu,batch=%llu,checksum=%.7f\n",
+           (unsigned long long)(scalarTicks/iterations),
+           (unsigned long long)(singleTicks/iterations),
+           (unsigned long long)(batchTicks/iterations),checksum);
+}
+
 static void vu0_scene_benchmark( const char* label, int side, int layers )
 {
     // Same ABBA experiment as MMI: VU0 disabled/enabled/enabled/disabled.
@@ -399,6 +493,7 @@ int main( void )
               (unsigned long long)(vu0ScalarTicks/256),
               (unsigned long long)(vu0VectorTicks/256) );
     screen_line( vu0Line );
+    vu0_batch_benchmark();
     vu0_scene_benchmark( "VU0 eight-box", 2, 2 );
     vu0_scene_benchmark( "VU0 32-box", 4, 2 );
     scr_setfontcolor( 0x77ff77u );

@@ -25,3 +25,8 @@ int b3Ps2GetVU0Enabled( void );
 // Always executes VU0 on PS2, scalar fallback on other targets. Used by
 // both the physics path and the differential correctness microbenchmark.
 void b3Ps2VU0Dot4( b3Ps2VU0Dot4Data* data );
+
+// Four independent DotW4 operations in one call. Input is an array of
+// four 16-byte-aligned records. Batching is required to amortize transfers.
+// This kernel alone does not alter the current per-contact solver layout.
+void b3Ps2VU0Dot4Batch4( b3Ps2VU0Dot4Data data[4] );
