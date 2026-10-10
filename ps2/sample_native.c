@@ -16,7 +16,11 @@
 #include <stdio.h>
 
 #define SCENE_COUNT 3
+#if defined(BOX3D_GS_OFFICIAL)
+#define MAX_BOXES 48
+#else
 #define MAX_BOXES 20
+#endif
 #define SCENE_FRAMES 600
 
 typedef struct SceneBody
@@ -99,8 +103,15 @@ static void scene_create(int kind)
     {
         // Stacking / Box Stack: first 12 of the desktop sample's
         // vertically stacked 40 boxes. Same half-extent and spacing.
+#if defined(BOX3D_GS_OFFICIAL)
+        // Match the upstream Box Stack's 40m ground and full 40-box setup.
+        add_box(0,pt(0,-1,0),pt(40,1,40),identity,noSpin,0.7f,65,95,112);
+        const int stackCount=40;
+#else
         add_box(0,pt(0,-1,0),pt(20,1,20),identity,noSpin,0.7f,65,95,112);
-        for(int i=0;i<12;++i)
+        const int stackCount=12;
+#endif
+        for(int i=0;i<stackCount;++i)
         {
             float y=0.75f+1.25f*(float)i;
 #if defined(BOX3D_GS_OFFICIAL)
@@ -114,8 +125,16 @@ static void scene_create(int kind)
                     (uint8_t)(90+i*10),(uint8_t)(190-i*6),230);
 #endif
         }
+#if defined(BOX3D_GS_OFFICIAL)
+        // Upstream SetView(40deg yaw, 15deg pitch, radius 50,
+        // target=(0,20,0)). Approximate with the same spherical pose.
+        s_scene.camera=b3GsLookAt(pt(31.05f,32.94f,36.99f),
+                                  pt(0,20,0),200);
+        puts("BOX3D_SAMPLE_SCENE,Stacking/BoxStack,boxes=40,look=upstream");
+#else
         s_scene.camera=b3GsLookAt(pt(18,13,22),pt(0,6.5f,0),200);
         puts("BOX3D_SAMPLE_SCENE,Stacking/BoxStack,boxes=12");
+#endif
     }
     else if(kind==1)
     {
