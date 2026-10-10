@@ -1260,16 +1260,41 @@ B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* conte
 				b3Vec3W vrB = b3AddVW( bB.v, b3CrossW( bB.w, rB ) );
 				b3FloatW vn = b3DotW( b3SubVW( vrB, vrA ), cm->normal );
 
-				// Compute normal impulse
-				b3FloatW negImpulse = b3MulW( cp->normalMasses, b3AddW( vn, velocityBias ) );
-
-				// Clamp the accumulated impulse
-				b3FloatW newImpulse = b3MaxW( b3SubW( cp->normalImpulses, negImpulse ), zeroW );
-				b3FloatW deltaImpulse = b3SubW( newImpulse, cp->normalImpulses );
-				cp->normalImpulses = newImpulse;
-				cp->totalNormalImpulses = b3AddW( cp->totalNormalImpulses, newImpulse );
-				totalNormalImpulse = b3AddW( totalNormalImpulse, newImpulse );
-				totalTwistLimit = b3AddW( totalTwistLimit, b3MulW( cp->leverArms, newImpulse ) );
+				b3FloatW newImpulse, deltaImpulse;
+#if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
+				if ( b3Ps2GetVU0Enabled() == 5 )
+				{
+					// Fuse normal bias, effective mass, clamp, delta and
+					// three accumulators into one register-resident VU0 call.
+					b3Ps2VU0NormalSolveData s;
+					b3StoreW4( s.oldImpulse, cp->normalImpulses );
+					b3StoreW4( s.normalMass, cp->normalMasses );
+					b3StoreW4( s.normalSpeed, vn );
+					b3StoreW4( s.velocityBias, velocityBias );
+					b3StoreW4( s.oldPointTotal, cp->totalNormalImpulses );
+					b3StoreW4( s.oldManifoldTotal, totalNormalImpulse );
+					b3StoreW4( s.oldTwistLimit, totalTwistLimit );
+					b3StoreW4( s.leverArm, cp->leverArms );
+					b3Ps2VU0NormalSolve( &s );
+					newImpulse = b3LoadW4( s.newImpulse );
+					deltaImpulse = b3LoadW4( s.deltaImpulse );
+					cp->normalImpulses = newImpulse;
+					cp->totalNormalImpulses = b3LoadW4( s.newPointTotal );
+					totalNormalImpulse = b3LoadW4( s.newManifoldTotal );
+					totalTwistLimit = b3LoadW4( s.newTwistLimit );
+				}
+				else
+#endif
+				{
+					// Original scalar operations unchanged for modes 0-4.
+					b3FloatW negImpulse = b3MulW( cp->normalMasses, b3AddW( vn, velocityBias ) );
+					newImpulse = b3MaxW( b3SubW( cp->normalImpulses, negImpulse ), zeroW );
+					deltaImpulse = b3SubW( newImpulse, cp->normalImpulses );
+					cp->normalImpulses = newImpulse;
+					cp->totalNormalImpulses = b3AddW( cp->totalNormalImpulses, newImpulse );
+					totalNormalImpulse = b3AddW( totalNormalImpulse, newImpulse );
+					totalTwistLimit = b3AddW( totalTwistLimit, b3MulW( cp->leverArms, newImpulse ) );
+				}
 
 				// Apply contact impulse
 				b3Vec3W P = b3MulSVW( deltaImpulse, cm->normal );

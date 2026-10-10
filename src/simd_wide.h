@@ -111,7 +111,7 @@ static inline void b3Dot2SharedW( b3Vec3W shared, b3Vec3W b0, b3Vec3W b1,
                                   b3FloatW* out0, b3FloatW* out1 )
 {
 #if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
-    if ( b3Ps2GetVU0Enabled() == 4 )
+    if ( b3Ps2GetVU0Enabled() >= 4 )
     {
         b3Ps2VU0SharedDotData s;
         b3StoreW4( s.sharedX, shared.X );
