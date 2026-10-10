@@ -661,3 +661,23 @@ edition only. Shadow overlap can accumulate darker than the earlier
 single combined mask. Full self-shadowing, temporal soft shadows,
 depth-map blocker searches and complex receiver intersections are
 future work.
+
+## 640x480p full-resolution GS and first broader demo subset
+
+Build `ps2/box3d_ps2_samples_pcf_progressive.elf` from
+`sh ps2/build_ee.sh`. It uses a genuine PS2SDK 480p progressive CRT
+mode, native GS 640x480 internal rendering, PSMCT16 double buffering,
+PSMZ16 and a full-resolution PSMCT32 shadow mask within GS 4 MiB
+VRAM, and an algebraically equivalent **four-bilinear-tap** weighted
+3x3 shadow mask (previous fixed PCF used nine taps).
+`box3d_ps2_samples_pcf_4tap.elf` renders the same optimized filter at
+320x224 for 4-vs-9-tap A/B comparison. Both are new experimental
+cross-link targets, not PCS​​X2-validated yet.
+
+Progressive sample port now cycles seven scenes, with per-frame GS GIF
+qword count and face-culling diagnostics. The upstream C++ library has
+185 registration statements across 21 `sample_*.cpp` files; consult
+`ps2/SAMPLE_PORTING_STATUS.md` for an honest coverage matrix.
+Native GS high-resolution implementation details and VRAM calculations
+are in `ps2/PROGRESSIVE_GS.md`. Proper VU1 microcode/VIF vertex
+batching and the unported original demos remain on the porting backlog.

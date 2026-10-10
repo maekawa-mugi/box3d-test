@@ -88,3 +88,26 @@ samples than the existing three C17 visual scenes. Full API/rendering
 parity across C++, ImGui, ragdolls, mesh primitives, events, joints
 and replay is a distinct long-term porting task, not completed by
 this display/backface change.
+
+## Expanding the original sample port
+
+The high-resolution-only C17 viewer now cycles **seven** actual physics
+scenes in groups Stacking, Shapes, Bodies, Restitution and World. Four
+new progressive-only scenes were added after this renderer document
+was introduced: Restitution/Varying (its original BOX option with all
+40 restitution values), Shapes/Slide Twist, Shapes/Conveyor Belt
+(using actual Box3D tangent velocity), and World/Far Stack at its
+single-precision origin preset.
+
+The confirmed 320x224 builds still cycle the original three scenes.
+This is **not all upstream demos**: see `ps2/SAMPLE_PORTING_STATUS.md`
+for an explicit audit of 185 literal `RegisterSample` occurrences
+in 21 upstream modules. The 185 count includes repeated registrations
+and does not imply there are 185 fully independent C++ classes.
+
+To assess progressive rendering rather than speculate about it,
+`BOX3D_GS_GEOMETRY` emits the number of EE-backface-culled and
+rendered box faces and the actual total GIF A+D packet qwords. The
+GS submission is a *single DMA transfer per frame*, already batched
+into 128-bit GIF qwords. **VU1 VIF DMA vertex transformation remains
+unimplemented**, and 480p PCSX2/hardware validation is still pending.
