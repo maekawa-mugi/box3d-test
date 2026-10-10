@@ -293,7 +293,7 @@ static void vu0_kernel_check( void )
     char display[128];
     snprintf( display, sizeof(display), "VU0 dot4: 384 lanes verified (max err %.6f)", worstError );
     screen_line( display );
-    printf( "BOX3D_VU0_KERNEL,PASS,max_error=%.7f\\n", worstError );
+    printf( "BOX3D_VU0_KERNEL,PASS,max_error=%.7f\n", worstError );
 }
 
 static uint64_t vu0_micro_sample( int enabled )
@@ -321,7 +321,7 @@ static uint64_t vu0_micro_sample( int enabled )
         checksum += r.x + r.y + r.z + r.w;
     }
     b3Ps2SetVU0Enabled( 0 );
-    printf( "BOX3D_VU0_MICRO,vu0=%d,total_ticks=%llu,avg_ticks=%llu,sum=%.6f\\n",
+    printf( "BOX3D_VU0_MICRO,vu0=%d,total_ticks=%llu,avg_ticks=%llu,sum=%.6f\n",
             enabled,(unsigned long long)ticks,(unsigned long long)(ticks/256),checksum );
     return ticks;
 }
@@ -335,7 +335,7 @@ static void vu0_scene_benchmark( const char* label, int side, int layers )
     for ( int i = 0; i < 4; ++i )
     {
         runs[i] = run_physics( 0, modes[i], side, layers );
-        printf( "BOX3D_VU0_SCENE,%s,repeat=%d,vu0=%d,ticks=%llu,y=%.7f,pos=%.7f,vel=%.7f\\n",
+        printf( "BOX3D_VU0_SCENE,%s,repeat=%d,vu0=%d,ticks=%llu,y=%.7f,pos=%.7f,vel=%.7f\n",
                 label,i,modes[i],(unsigned long long)runs[i].ticks,
                 runs[i].firstY,runs[i].positionSum,runs[i].velocitySum );
         if ( modes[i] ) vu0 += runs[i].ticks;
@@ -359,7 +359,7 @@ static void vu0_scene_benchmark( const char* label, int side, int layers )
               label,(unsigned long long)(baseline/(2*BENCH_STEPS)),
               (unsigned long long)(vu0/(2*BENCH_STEPS)),ratio );
     screen_line( display );
-    printf( "BOX3D_VU0_SUMMARY,%s,scalar_ticks=%llu,vu0_ticks=%llu,ratio=%.5f,correct=1\\n",
+    printf( "BOX3D_VU0_SUMMARY,%s,scalar_ticks=%llu,vu0_ticks=%llu,ratio=%.5f,correct=1\n",
             label,(unsigned long long)baseline,(unsigned long long)vu0,ratio );
 }
 
