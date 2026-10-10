@@ -54,6 +54,9 @@ int main(void)
     assert(3u*pageSize(640,480,16)+pageSize(640,480,32)+
            pageSize(320,240,32)+pageSize(160,120,32)==3620864u);
     assert(4194304u-3620864u==573440u);
+    // A separate half-res PSMCT32 filtered mask combines all far PCSS taps.
+    assert(3620864u+pageSize(320,240,32)==3948544u);
+    assert(4194304u-3948544u==245760u);
     assert(layout(320,224,0)==1425408u);
     assert(layout(640,480,1)==4112384u);
     assert(4194304u-layout(640,480,1)==81920u);

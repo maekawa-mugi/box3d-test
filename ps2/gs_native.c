@@ -78,6 +78,9 @@ static int s_shadowMask;
 // here before the separable 3x3 final convolution.
 static int s_pcssPrefilter;
 static int s_pcssQuarterFilter;
+// Disjoint half-size PSMCT32 filtered coverage. Build all taps here,
+// then darken the PSMCT16 scene only ONCE to avoid repeated 5-bit rounding.
+static int s_pcssFiltered;
 #endif
 static int s_halfMask[2];
 static int s_quarterMask[2];
@@ -198,7 +201,14 @@ int b3GsInit(void)
         puts("BOX3D_GS_FAIL,pcss_quarter_prefilter_vram");
         return 0;
     }
-    puts("BOX3D_GS_PCSS_PREFILTER,half=320x240,quarter=160x120,disjoint=1");
+    s_pcssFiltered=b3GsAllocatePageSurface(B3_KAWASE_HALF_W,
+                                           B3_KAWASE_HALF_H,GS_PSM_32);
+    if(s_pcssFiltered<0)
+    {
+        puts("BOX3D_GS_FAIL,pcss_filtered_vram");
+        return 0;
+    }
+    puts("BOX3D_GS_PCSS_PREFILTER,half=320x240,quarter=160x120,filtered=320x240,disjoint=1");
 #endif
 #else
     for(int i=0;i<2;++i)
@@ -868,12 +878,7 @@ void b3GsShadowEnd(void)
             b3GsAD(GS_SET_ALPHA(0,2,2,1,128),GS_REG_ALPHA_1);
             b3GsKawaseBlit(B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H,
                            B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,0,0);
-            b3GsShadowCompositeSource(s_pcssQuarterFilter,
-                                      B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H);
         }
-        else
-            b3GsShadowCompositeSource(s_pcssPrefilter,
-                                      B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
     }
     else
 #endif
@@ -899,26 +904,35 @@ void b3GsShadowEnd(void)
     else
     {
 #if defined(BOX3D_PS2_UNIFIED)
-        // Compact 3x3 separable tent, always +/-1 screen pixel.
-        // Larger distance blur comes from half/quarter bilinear levels,
-        // NEVER four displaced hard copies of the same silhouette.
-        const int tapWidth=pcssTier==2?
-                           B3_KAWASE_QUARTER_W:B3_KAWASE_HALF_W;
-        const int tapHeight=pcssTier==2?
-                            B3_KAWASE_QUARTER_H:B3_KAWASE_HALF_H;
-        const int shift=b3Ps2PcssFinalShift(s_pcssRadius);
+        // Filter on an 8-bit/channel scratch target before touching the
+        // 5-bit/channel display framebuffer. The nine 2D tent taps use
+        // weights totaling 96 and have connected support in both axes.
+        // Integer minor-axis compression previously mapped +/-1 to zero,
+        // accidentally collapsing the entire 3x3 kernel into one row.
+        const int src=(pcssTier==2)?s_pcssQuarterFilter:s_pcssPrefilter;
+        const int srcW=(pcssTier==2)?
+                       B3_KAWASE_QUARTER_W:B3_KAWASE_HALF_W;
+        const int srcH=(pcssTier==2)?
+                       B3_KAWASE_QUARTER_H:B3_KAWASE_HALF_H;
+        b3GsKawaseTarget(s_pcssFiltered,B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
+        b3GsKawaseClear(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
+        b3GsKawaseSource(src,srcW,srcH,0,0);
         for(int iy=-1;iy<=1;++iy)
         for(int ix=-1;ix<=1;++ix)
         {
             int fix=(ix==0&&iy==0)?24:
                     ((ix==0||iy==0)?12:6);
-            int dx=ix*shift,dy=iy*shift;
-            if(s_pcssMajorX)
-                dy=b3Ps2ShadowCompressMinor(dy);
-            else
-                dx=b3Ps2ShadowCompressMinor(dx);
-            b3GsShadowCompositeTap(tapWidth,tapHeight,dx,dy,fix);
+            // ADD sampled coverage into the disjoint 32-bit mask.
+            b3GsAD(GS_SET_ALPHA(0,2,2,1,fix),GS_REG_ALPHA_1);
+            b3GsKawaseBlit(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
+                           srcW,srcH,ix,iy);
         }
+        // A single final RGB subtraction onto the 16-bit framebuffer.
+        b3GsShadowCompositeSource(s_pcssFiltered,
+                                  B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
+        b3GsPcssScissor();
+        b3GsShadowCompositeTap(B3_KAWASE_HALF_W,
+                               B3_KAWASE_HALF_H,0,0,128);
 #else
         for(int iy=-2;iy<=2;++iy)
         for(int ix=-2;ix<=2;++ix)

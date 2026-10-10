@@ -269,3 +269,19 @@ capture Spinning Books plus the corresponding
 `BOX3D_PCSS_UNION` log: if only one component and one composite
 are reported, investigate GS texture sampling/texel alignment
 rather than repeated caster passes.
+
+## 2026-10-10: 32-bit PCSS filter accumulation (experimental)
+
+The 3x3 far-field tent is no longer collapsed to a single horizontal or
+vertical axis by integer minor-axis compression. Its nine weighted taps
+accumulate on a disjoint 320x240 PSMCT32 render target, then a **single**
+GS subtraction composites the result into the 640x480 PSMCT16 scene.
+Near-contact shadows retain the existing four-bilinear-tap full-resolution
+PCF path. Full/half/quarter mask sources stay disjoint from all destinations;
+every texture change issues TEXFLUSH.
+
+The additional PSMCT32 target costs 327,680 bytes (GS page rounded).
+Expected total surface allocation: **3,948,544 / 4,194,304 bytes**,
+leaving **245,760 bytes**. This is a change in GS blend path and must be
+visually checked on PCSX2/real GS, particularly mask intensity and edges.
+No FPS or silhouette-quality improvement is claimed without a new run.
