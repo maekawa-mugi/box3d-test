@@ -490,6 +490,41 @@ void b3GsShadowBegin(void)
 void b3GsShadowEnd(void)
 {
     s_shadowPass=0;
+#if defined(BOX3D_GS_PCF_SHADOWS)
+    // PCF-like visibility filtering on a pre-rasterized shadow mask.
+    // This is NOT depth-map PCF: the geometry/receiver has already
+    // resolved occlusion into RGB coverage. Sample that coverage using
+    // GS bilinear TEX1 and nine neighboring taps at FULL resolution.
+    //
+    // One sample at (x,y) with a 3x3 separable Gaussian-ish kernel:
+    //      6 12  6
+    //     12 24 12   (sum = 96)
+    //      6 12  6
+    // The GS fixed-function subtract blend uses per-tap FIX = weight.
+    // At mask RGB=128 this produces at most 96 gray levels of shadow,
+    // preserves the original silhouette, and softens ~1-2 pixels rather
+    // than blurring through repeated 80x56 down/up Kawase stages.
+    //
+    // No render-to-texture feedback: RAW and destination framebuffer
+    // occupy disjoint PS2 GS VRAM allocations. TEXFLUSH handles cache.
+    b3GsKawaseTarget(s_framebuffer[s_back],B3_PS2_GS_W,B3_PS2_GS_H);
+    b3GsKawaseSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H,9,8);
+    const int radius=1;
+    for(int iy=-1;iy<=1;++iy)
+    {
+        for(int ix=-1;ix<=1;++ix)
+        {
+            const int fix=(ix==0 && iy==0)?24:
+                          ((ix==0 || iy==0)?12:6);
+            // GS ALPHA = (ZERO - TEXEL_RGB) * FIX/128 + DEST_RGB.
+            // For a 128-valued mask, sum 96 => darkening 96/255.
+            b3GsAD(GS_SET_ALPHA(2,0,2,1,fix),GS_REG_ALPHA_1);
+            b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
+                           B3_PS2_GS_W,B3_PS2_GS_H,
+                           ix*radius,iy*radius);
+        }
+    }
+#else
     // Full mask -> half via one GS bilinear draw.
     b3GsKawaseTarget(s_halfMask[0],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
     b3GsKawaseClear(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
@@ -532,6 +567,7 @@ void b3GsShadowEnd(void)
                    B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,-2, 2);
     b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
                    B3_KAWASE_HALF_W,B3_KAWASE_HALF_H, 2, 2);
+#endif
     // Restore the depth test before drawing another receiver or the
     // dynamic boxes. The shadow mask itself must not alter scene depth.
     b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,0),GS_REG_ZBUF_1);

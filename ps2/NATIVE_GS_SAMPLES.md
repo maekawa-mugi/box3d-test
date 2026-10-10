@@ -335,3 +335,52 @@ sh ps2/build_ee.sh
 **PCSX2 validation after this renderer rewrite is pending.** The
 previous dark masks and fragmented projected shadows are confirmed
 regressions, not a successful soft-shadow demo.
+
+## PCF-like full-resolution shadow filter (after PCSX2 Kawase feedback)
+
+The tester's latest PCSX2 screenshot confirms the native GS RAW/QUARTER/
+FINAL masks contain shadows and the full receiver-layered pipeline works,
+but the Dual Kawase chain softens them too aggressively. The new opt-in
+`ps2/box3d_ps2_samples_pcf.elf` bypasses ALL half/quarter ping-pong
+stages during shadow compositing. It takes the already receiver-projected,
+non-Z-tested **320x224 RGB shadow coverage mask** and reads it as a GS
+TEX0 PSMCT32 texture with `TEX1` bilinear filtering and texture-cache
+flush. The fixed-function GS alpha blender averages a compact 3x3
+pattern with these per-tap weights (sum = 96):
+
+```
+    6  12   6
+   12  24  12
+    6  12   6
+```
+
+Nine full-resolution textured sprites use 1-pixel X/Y shifts and
+`GS_SET_ALPHA(2,0,2,1,FIX)` with `FIX` equal to each weight. Since
+coverage is encoded in RGB 0..128, this subtracts up to 96 RGB levels
+on fully shadowed pixels and forms a compact ~1-2 pixel penumbra.
+No EE pixel readback, no GLSL, gsKit, libdraw, libtexture or IOP helpers.
+
+**Terminology:** This is *PCF-like post-filtering of a precomputed binary
+coverage mask*, not depth-map percentage-closer filtering. Traditional
+PCF compares receiver depth against a shadow-depth map per tap. GS has
+no programmable per-texel depth comparison; a true depth-map PCF would
+require an explicit GS multipass comparison design. Filtering after
+geometry visibility is instead a deliberately sharp PS2-friendly
+approximation.
+
+Compare:
+```sh
+sh ps2/build_ee.sh
+# box3d_ps2_samples_shadows.elf      hard reference
+# box3d_ps2_samples_pcf.elf          new full-res 3x3 weighted filter
+# box3d_ps2_samples_softshadows.elf  existing broad Kawase reference
+```
+
+Both use the same Box3D positions/casters/receiver order. GS HUD for
+the new edition reads `GS PCF 3X3`, and stdout prints
+`BOX3D_SHADOW_FILTER,PCF_MASK_3X3,...`. The PCF mode still allocates
+the earlier shared half/quarter scratch buffers for layout simplicity
+but does not sample or iterate over them.
+
+**The new PCF ELF has not yet been crosscompiled/run in PCS​​X2; the
+soft working screenshot validates only the older Kawase pipeline.**

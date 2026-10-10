@@ -466,7 +466,9 @@ static void render_official_hud(void)
 #endif
     b3GsOverlayText(14,12,"BOX3D   PS2",239,245,247);
     b3GsOverlayText(14,25,sceneNames[s_scene.kind],189,214,223);
-#if defined(BOX3D_GS_KAWASE_SHADOWS)
+#if defined(BOX3D_GS_PCF_SHADOWS)
+    b3GsOverlayText(14,37,"GS PCF 3X3",188,226,240);
+#elif defined(BOX3D_GS_KAWASE_SHADOWS)
     b3GsOverlayText(14,37,"SOFT GS KAWASE",188,226,240);
 #endif
 }
@@ -522,6 +524,9 @@ int main(void)
 {
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
+#if defined(BOX3D_GS_PCF_SHADOWS)
+    puts("BOX3D_SHADOW_FILTER,PCF_MASK_3X3,source=320x224,radius=1px,weight_sum=96");
+#endif
     b3SetAssertFcn(fail_assert);
     b3SetLogFcn(log_message);
     if(!b3GsInit())
