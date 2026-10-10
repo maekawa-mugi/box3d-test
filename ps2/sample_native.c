@@ -48,6 +48,9 @@ typedef struct SceneBody
 {
     b3BodyId id;
     b3GsPoint3 half;
+    // Physical capsule endpoints are often offset within their body.
+    // Render the visual cuboid centered on the capsule, not body origin.
+    b3GsPoint3 localCenter;
     uint8_t r,g,b;
 } SceneBody;
 
@@ -160,6 +163,8 @@ static void scene_create(int kind)
 {
     s_scene.count=0;
     s_scene.kind=kind;
+    // Reuse the backing array across scenes without stale local offsets.
+    for(int i=0;i<MAX_BOXES;++i)s_scene.objects[i].localCenter=pt(0,0,0);
 #if defined(BOX3D_GS_PROGRESSIVE)
     s_ragdoll=(Human){0};
 #endif
@@ -352,25 +357,36 @@ static void scene_create(int kind)
                 0.7f,175,182,184);
         CreateHuman(&s_ragdoll,s_scene.world,(b3Pos){0,2,0},
                     5.0f,1.0f,0.7f,1,NULL,false);
+        // Capsule-axis-aligned cuboid proxies for the original Human
+        // bone shapes. Each localCenter follows the capsule endpoint
+        // midpoint from shared/human.c, including off-axis legs/arms.
         static const b3GsPoint3 boneHalf[bone_count]={
-            {0.18f,0.14f,0.13f}, // pelvis
-            {0.22f,0.21f,0.13f}, // spine 01
-            {0.23f,0.24f,0.13f}, // spine 03
-            {0.15f,0.16f,0.16f}, // neck/head
-            {0.105f,0.24f,0.11f}, // upper legs
-            {0.09f,0.24f,0.095f},
-            {0.105f,0.24f,0.11f},
-            {0.09f,0.24f,0.095f},
-            {0.1f,0.19f,0.10f}, // arms
-            {0.085f,0.19f,0.085f},
-            {0.1f,0.19f,0.10f},
-            {0.085f,0.19f,0.085f}
+            {0.19f,0.15f,0.15f}, // pelvis
+            {0.17f,0.15f,0.16f}, // spine 01
+            {0.20f,0.17f,0.18f}, // spine 03
+            {0.12f,0.18f,0.12f}, // head
+            {0.26f,0.11f,0.10f}, // left thigh, local X
+            {0.31f,0.11f,0.10f}, // left calf+foot, local X
+            {0.26f,0.11f,0.10f}, // right thigh
+            {0.31f,0.11f,0.10f}, // right calf+foot
+            {0.23f,0.085f,0.085f}, // left arm
+            {0.21f,0.075f,0.075f},
+            {0.23f,0.085f,0.085f}, // right arm
+            {0.21f,0.075f,0.075f}
+        };
+        static const b3GsPoint3 boneCenter[bone_count]={
+            {0,0,0}, {0,-0.147f,0.006f}, {0,-0.117f,-0.04f},
+            {0,-0.15f,0}, {-0.214f,0,0}, {-0.22f,0,0},
+            {0.214f,0,0}, {0.22f,0,0},
+            {0.14f,0,-0.008f}, {0.17f,0,-0.009f},
+            {-0.14f,0,0.008f}, {-0.17f,0,0.009f}
         };
         for(int i=0;i<bone_count;++i)
         {
             SceneBody* body=&s_scene.objects[s_scene.count++];
             body->id=s_ragdoll.bones[i].bodyId;
             body->half=boneHalf[i];
+            body->localCenter=boneCenter[i];
             // Shirt, denim pants and skin-style palette.
             if(i==bone_pelvis||i==bone_thigh_l||i==bone_calf_l||
                i==bone_thigh_r||i==bone_calf_r)
@@ -413,6 +429,9 @@ static void draw_box(const SceneBody* body)
             (i&2)?body->half.y:-body->half.y,
             (i&4)?body->half.z:-body->half.z
         };
+        local.x+=body->localCenter.x;
+        local.y+=body->localCenter.y;
+        local.z+=body->localCenter.z;
         b3Vec3 rotated=b3RotateVector(q,local);
         verts[i]=pt((float)origin.x+rotated.x,
                     (float)origin.y+rotated.y,
@@ -610,6 +629,9 @@ static void cornersForBody(const SceneBody* body,b3ShadowVec3 out[8])
             (v&2)?body->half.y:-body->half.y,
             (v&4)?body->half.z:-body->half.z
         };
+        local.x+=body->localCenter.x;
+        local.y+=body->localCenter.y;
+        local.z+=body->localCenter.z;
         b3Vec3 world=b3RotateVector(q,local);
         out[v]=(b3ShadowVec3){
             (float)origin.x+world.x,
