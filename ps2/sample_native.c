@@ -644,87 +644,122 @@ static void render_receiver_shadows(int receiver)
 {
     unsigned emittedTriangles=0;
     unsigned projectedHulls=0;
-    // Same directional-light orientation as the face lighting.
     const b3ShadowVec3 direction={-0.44f,-0.82f,-0.36f};
+    b3ShadowReceiver plane=makeReceiver(receiver);
 
-    // A receiver is already drawn. Shadows are clipped to its finite
-    // shape. In the PCSS-inspired mode each individual caster gets a
-    // separate mask/filter pass, so penumbra radius can vary per body.
-#if !defined(BOX3D_GS_PCSS_SHADOWS)
-    b3GsShadowBegin();
-#endif
-    {
-        b3ShadowReceiver plane=makeReceiver(receiver);
 #if defined(BOX3D_GS_PCSS_SHADOWS)
-        int minRadius=5, maxRadius=0;
+    // A separate subtractive composite for EVERY caster used to stack
+    // up to 40 dark shadows at the same floor location. The result was
+    // an opaque black orb plus the hard shadow. Form the UNION of caster
+    // silhouettes at each penumbra radius, then filter/composite ONCE
+    // for the whole radius bucket. Thus there are at most 5 composites
+    // per receiver rather than one for every box.
+    uint8_t casterRadius[MAX_BOXES]={0};
+    int bx0[6],by0[6],bx1[6],by1[6];
+    unsigned bucketCasters[6]={0};
+    int minRadius=5,maxRadius=0;
+    for(int radius=1;radius<=5;++radius)
+    {
+        bx0[radius]=B3_PS2_GS_W;
+        by0[radius]=B3_PS2_GS_H;
+        bx1[radius]=-1;
+        by1[radius]=-1;
+    }
+    float cameraZ=
+        (plane.origin.x-s_scene.camera.eye.x)*s_scene.camera.forward.x+
+        (plane.origin.y-s_scene.camera.eye.y)*s_scene.camera.forward.y+
+        (plane.origin.z-s_scene.camera.eye.z)*s_scene.camera.forward.z;
+    if(cameraZ<2.0f)cameraZ=2.0f;
+    float pxPerMeter=s_scene.camera.focal/cameraZ;
+
+    for(int caster=1;caster<s_scene.count;++caster)
+    {
+        if(caster==receiver)continue;
+        b3ShadowVec3 corners[8];
+        b3ShadowPolygon poly;
+        cornersForBody(&s_scene.objects[caster],corners);
+        if(b3ShadowProjectBox(corners,direction,&plane,&poly)<3)
+            continue;
+
+        // The actual nearest corner-plane gap, not the distance of
+        // the body COM. Contact stays narrow, floating bodies soften.
+        float gap=1000000.0f;
+        for(int v=0;v<8;++v)
+        {
+            const b3ShadowVec3 p=corners[v];
+            float d=(p.x-plane.origin.x)*plane.normal.x+
+                    (p.y-plane.origin.y)*plane.normal.y+
+                    (p.z-plane.origin.z)*plane.normal.z;
+            if(d<gap)gap=d;
+        }
+        if(gap<0.0f)gap=0.0f;
+        int radius=b3Ps2ShadowRadius(gap,pxPerMeter);
+        casterRadius[caster]=(uint8_t)radius;
+        ++bucketCasters[radius];
+        if(radius<minRadius)minRadius=radius;
+        if(radius>maxRadius)maxRadius=radius;
+
+        // Conservative screen bounds for the UNION of all shadows in
+        // this radius bucket. One enlarged scissor per group prevents
+        // rectangular cutoff artifacts and limits GS fill.
+        int x0=B3_PS2_GS_W,y0=B3_PS2_GS_H;
+        int x1=-1,y1=-1,allProjected=1;
+        for(int v=0;v<poly.count;++v)
+        {
+            b3ShadowVec3 vertex=
+                b3ShadowOnReceiver(poly.vertices[v],&plane,0.045f);
+            int x,y;
+            if(!b3GsProjectScreen(s_scene.camera,toPoint3(vertex),&x,&y))
+            {
+                allProjected=0;
+                break;
+            }
+            if(x<x0)x0=x;
+            if(x>x1)x1=x;
+            if(y<y0)y0=y;
+            if(y>y1)y1=y;
+        }
+        if(!allProjected)
+        {
+            x0=0;y0=0;
+            x1=B3_PS2_GS_W-1;
+            y1=B3_PS2_GS_H-1;
+        }
+        if(x0<bx0[radius])bx0[radius]=x0;
+        if(y0<by0[radius])by0[radius]=y0;
+        if(x1>bx1[radius])bx1[radius]=x1;
+        if(y1>by1[radius])by1[radius]=y1;
+    }
+    int passes=5;
+#else
+    int passes=1;
 #endif
+
+    for(int pass=1;pass<=passes;++pass)
+    {
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+        if(bucketCasters[pass]==0)continue;
+        b3GsShadowSetPenumbra(pass,bx0[pass],by0[pass],
+                               bx1[pass],by1[pass]);
+#endif
+        // Inside this pass overlapping silhouettes REPLACE the same
+        // 128-valued coverage; they do not repeatedly darken the scene.
+        b3GsShadowBegin();
         for(int caster=1;caster<s_scene.count;++caster)
         {
             if(caster==receiver)continue;
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+            if(casterRadius[caster]!=pass)continue;
+#endif
             b3ShadowVec3 corners[8];
             b3ShadowPolygon poly;
             cornersForBody(&s_scene.objects[caster],corners);
             if(b3ShadowProjectBox(corners,direction,&plane,&poly)<3)
                 continue;
 
-            // A single convex silhouette fan avoids intra-caster
-            // alpha overdraw. PCSS mode filters every caster separately
-            // to preserve the contact-hardening property.
             ++projectedHulls;
-#if defined(BOX3D_GS_PCSS_SHADOWS)
-            // Distance between the nearest box corner and its receiving
-            // plane. Contact/penetration -> radius 1, floating -> wider.
-            float gap=1000000.0f;
-            for(int v=0;v<8;++v)
-            {
-                const b3ShadowVec3 p=corners[v];
-                float height=(p.x-plane.origin.x)*plane.normal.x+
-                             (p.y-plane.origin.y)*plane.normal.y+
-                             (p.z-plane.origin.z)*plane.normal.z;
-                if(height<gap)gap=height;
-            }
-            if(gap<0.0f)gap=0.0f;
-
-            // Projected pixel scale accounts for camera zoom/distance,
-            // not just world-space height. The 0.08 scale is a tunable
-            // approximation of finite-area emitter angular diameter.
-            float cameraZ=
-                (plane.origin.x-s_scene.camera.eye.x)*s_scene.camera.forward.x+
-                (plane.origin.y-s_scene.camera.eye.y)*s_scene.camera.forward.y+
-                (plane.origin.z-s_scene.camera.eye.z)*s_scene.camera.forward.z;
-            if(cameraZ<2.0f)cameraZ=2.0f;
-            int radius=b3Ps2ShadowRadius(gap,s_scene.camera.focal/cameraZ);
-            if(radius<minRadius)minRadius=radius;
-            if(radius>maxRadius)maxRadius=radius;
-
-            // Compute a conservative, projected on-screen bbox. The GS
-            // scissor limits both offscreen mask clears and 9/21 sprite
-            // taps to this shadow, avoiding 40 full-screen PCF passes.
-            int x0=10000,y0=10000,x1=-10000,y1=-10000,ok=1;
-            for(int v=0;v<poly.count;++v)
-            {
-                b3ShadowVec3 world=b3ShadowOnReceiver(
-                    poly.vertices[v],&plane,0.045f);
-                int x,y;
-                if(!b3GsProjectScreen(s_scene.camera,toPoint3(world),&x,&y))
-                {
-                    ok=0;break;
-                }
-                if(x<x0)x0=x;
-                if(x>x1)x1=x;
-                if(y<y0)y0=y;
-                if(y>y1)y1=y;
-            }
-            if(!ok)
-            {
-                // Near-plane-clipped silhouettes can extend beyond
-                // original projections; use full-screen safe fallback.
-                x0=0;y0=0;x1=B3_PS2_GS_W-1;y1=B3_PS2_GS_H-1;
-            }
-            b3GsShadowSetPenumbra(radius,x0,y0,x1,y1);
-            b3GsShadowBegin();
-#endif
-            b3ShadowVec3 w0=b3ShadowOnReceiver(poly.vertices[0],&plane,0.045f);
+            b3ShadowVec3 w0=
+                b3ShadowOnReceiver(poly.vertices[0],&plane,0.045f);
             b3GsPoint3 p0=toPoint3(w0);
             for(int t=1;t+1<poly.count;++t)
             {
@@ -735,22 +770,20 @@ static void render_receiver_shadows(int receiver)
                 b3GsTriangle3(s_scene.camera,p0,p1,p2,39,48,56);
                 ++emittedTriangles;
             }
-#if defined(BOX3D_GS_PCSS_SHADOWS)
-            b3GsShadowEnd();
-#endif
         }
-#if defined(BOX3D_GS_PCSS_SHADOWS)
-        if(s_frame%240==0)
-            printf("BOX3D_PCSS_RECEIVER,scene=%d,receiver=%d,casters=%u,radius_min=%d,radius_max=%d\n",
-                   s_scene.kind,receiver,projectedHulls,
-                   projectedHulls?minRadius:0,maxRadius);
-#endif
+        b3GsShadowEnd();
     }
-#if !defined(BOX3D_GS_PCSS_SHADOWS)
-    b3GsShadowEnd();
+
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+    if(s_frame%240==0)
+    {
+        int nonempty=0;
+        for(int r=1;r<=5;++r)nonempty+=bucketCasters[r]!=0;
+        printf("BOX3D_PCSS_RECEIVER,scene=%d,receiver=%d,casters=%u,radius_min=%d,radius_max=%d,buckets=%d,composites=%d\n",
+               s_scene.kind,receiver,projectedHulls,
+               projectedHulls?minRadius:0,maxRadius,nonempty,nonempty);
+    }
 #endif
-    // Console diagnostics: prove complete silhouettes and both potential
-    // receivers were actually processed, independently of screenshots.
     if(s_frame%240==0)
         printf("BOX3D_SHADOW_RECEIVERS,scene=%d,receiver=%d,hulls=%u,triangles=%u\n",
                s_scene.kind,receiver,projectedHulls,emittedTriangles);
