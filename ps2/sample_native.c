@@ -889,7 +889,7 @@ static void render_receiver_shadows(int receiver)
         if(b->radius>maxRadius)maxRadius=b->radius;
         b->x0=B3_PS2_GS_W;b->y0=B3_PS2_GS_H;
         b->x1=-1;b->y1=-1;
-        int allProjected=1;
+        int allProjected=1,allRasterSafe=1;
         for(int v=0;v<poly.count;++v)
         {
             b3ShadowVec3 point=
@@ -900,12 +900,16 @@ static void render_receiver_shadows(int receiver)
                 allProjected=0;
                 break;
             }
+            if(vtx->x16 < -4096 || vtx->y16 < -4096 ||
+               vtx->x16 > (B3_PS2_GS_W+256)*16 ||
+               vtx->y16 > (B3_PS2_GS_H+256)*16)
+                allRasterSafe=0;
             if(vtx->x<b->x0)b->x0=vtx->x;
             if(vtx->y<b->y0)b->y0=vtx->y;
             if(vtx->x>b->x1)b->x1=vtx->x;
             if(vtx->y>b->y1)b->y1=vtx->y;
         }
-        s_shadowScreenValid[caster]=(unsigned char)allProjected;
+        s_shadowScreenValid[caster]=(unsigned char)(allProjected&&allRasterSafe);
         if(!allProjected)
         {
             // A clipped near-plane polygon is conservatively fullscreen

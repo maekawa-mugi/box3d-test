@@ -351,3 +351,14 @@ contact generation, solver iteration count, or shadow/geometry CPU time
 is the next major constraint. No automatic reduction of solver quality
 was made. CI now also runs a deterministic 250-case randomized union
 comparison against the original all-pairs reference.
+
+## 2026-10-10: offscreen-shadow bounds regression guard
+
+The polygon classifier now distinguishes a failed perspective projection
+(near/far clip, which needs a conservative full-screen bounds fallback)
+from a valid projection outside the GS extended XY12.4 raster range.
+Offscreen points keep their actual screen-space bounds for overlap
+grouping. Only the fast direct XYZ emission is disabled; the original
+clipped triangle routine handles raster-unsafe polygons. This prevents
+an out-of-range but valid silhouette from unnecessarily expanding a
+PCSS group to the full screen.

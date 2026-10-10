@@ -469,19 +469,24 @@ static int projectDepth(b3GsCamera c,b3GsPoint3 v,
 int b3GsProjectPoint(b3GsCamera camera,b3GsPoint3 vertex,
                      b3GsProjectedVertex* p)
 {
-    if(!projectDepthPrecise(camera,vertex,&p->x,&p->y,
-                            &p->depth,&p->x16,&p->y16))
-        return 0;
-    // Out-of-range vertices require the original clipping path.
-    return p->x16>=-4096 && p->y16>=-4096 &&
-           p->x16<=(B3_PS2_GS_W+256)*16 &&
-           p->y16<=(B3_PS2_GS_H+256)*16;
+    // A valid camera projection is not necessarily safe to pass directly
+    // into the GS 16-bit XYZ registers. Callers separately choose the
+    // fast raster path or triangle clipping based on the XY12.4 range.
+    return projectDepthPrecise(camera,vertex,&p->x,&p->y,
+                               &p->depth,&p->x16,&p->y16);
 }
 int b3GsProjectHull(b3GsCamera camera,const b3GsPoint3 vertices[8],
                     b3GsProjectedVertex out[8])
 {
     for(int i=0;i<8;++i)
+    {
         if(!b3GsProjectPoint(camera,vertices[i],&out[i]))return 0;
+        const b3GsProjectedVertex* p=&out[i];
+        if(p->x16 < -4096 || p->y16 < -4096 ||
+           p->x16 > (B3_PS2_GS_W+256)*16 ||
+           p->y16 > (B3_PS2_GS_H+256)*16)
+            return 0;
+    }
     return 1;
 }
 void b3GsTriangleProjected(const b3GsProjectedVertex* a,
