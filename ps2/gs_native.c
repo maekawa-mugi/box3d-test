@@ -487,6 +487,27 @@ static void b3GsKawaseBlit(int targetW,int targetH,int srcW,int srcH,
     b3GsAD(GS_SET_UV((srcW<<4)+8,(srcH<<4)+8),GS_REG_UV);
     b3GsAD(b3GsXYZ(targetW+shiftX,targetH+shiftY),GS_REG_XYZ2);
 }
+
+#if defined(BOX3D_GS_PCF_4TAP)
+// Bilinear texel half-offsets realize the separable 3x3 tent kernel:
+// [1 2 1] x [1 2 1] / 16, using four equal-weight GS samples.
+// Source UV uses unsigned 4.4 pixel positions: 8 +/- 8 is 0 or 16.
+static void b3GsPcf4Tap(int width,int height)
+{
+    b3GsAD(GS_SET_PRIM(6,0,1,0,1,0,1,0,0),GS_REG_PRIM);
+    b3GsAD(GS_SET_ALPHA(2,0,2,1,24),GS_REG_ALPHA_1);
+    for(int dy=-1;dy<=1;dy+=2)
+    for(int dx=-1;dx<=1;dx+=2)
+    {
+        b3GsAD(GS_SET_UV(8+8*dx,8+8*dy),GS_REG_UV);
+        b3GsAD(b3GsXYZ(0,0),GS_REG_XYZ2);
+        b3GsAD(GS_SET_UV((width<<4)+8+8*dx,
+                         (height<<4)+8+8*dy),GS_REG_UV);
+        b3GsAD(b3GsXYZ(width,height),GS_REG_XYZ2);
+    }
+}
+#endif
+
 static void b3GsKawasePass(int target,int targetW,int targetH,
                            int source,int sourceW,int sourceH,
                            int sourceTw,int sourceTh,int radius)
@@ -510,7 +531,7 @@ void b3GsShadowSetPenumbra(int radius,int x0,int y0,int x1,int y1)
     s_pcssRadius=radius;
     // Pad the projected silhouette by the furthest filter tap and
     // rasterization rounding. Clip both mask CLEAR and final blending.
-    int pad=radius+3;
+    int pad=radius*3+6;
     x0-=pad;y0-=pad;x1+=pad;y1+=pad;
     if(x0<0)x0=0;
     if(y0<0)y0=0;
@@ -535,10 +556,9 @@ void b3GsShadowBegin(void)
     // already-rendered receiver passes ZGREATER. Ground and ramp shadows
     // are thus cropped by the real foreground surface, not just a 2D mask.
     b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,1),GS_REG_ZBUF_1);
+    // Clear all RAW texels for every caster: a scissored partial clear
+    // left stale pixels for neighboring bilinear taps, creating boxes.
     b3GsKawaseTarget(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H);
-#if defined(BOX3D_GS_PCSS_SHADOWS)
-    b3GsPcssScissor();
-#endif
     b3GsKawaseClear(B3_PS2_GS_W,B3_PS2_GS_H);
     // The receiver polygon is geometrically clipped. Do not Z-discard
     // it against checker-floor triangles with different tessellation.
@@ -605,6 +625,9 @@ void b3GsShadowEnd(void)
     // occupy disjoint PS2 GS VRAM allocations. TEXFLUSH handles cache.
     b3GsKawaseTarget(s_framebuffer[s_back],B3_PS2_GS_W,B3_PS2_GS_H);
     b3GsKawaseSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H,9,8);
+#if defined(BOX3D_GS_PCF_4TAP)
+    b3GsPcf4Tap(B3_PS2_GS_W,B3_PS2_GS_H);
+#else
     const int radius=1;
     for(int iy=-1;iy<=1;++iy)
     {
@@ -620,6 +643,7 @@ void b3GsShadowEnd(void)
                            ix*radius,iy*radius);
         }
     }
+#endif
 #else
     // Full mask -> half via one GS bilinear draw.
     b3GsKawaseTarget(s_halfMask[0],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
