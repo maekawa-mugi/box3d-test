@@ -17,8 +17,10 @@ typedef struct b3Ps2VU0Dot4Data
     float out[4];
 } b3Ps2VU0Dot4Data;
 
-// Runtime switch applies to b3DotW4 used by the width-4 contact solver.
-// Disabled by default. Do not toggle while b3World_Step is in progress.
+// 0: original scalar COP1; 1: legacy single-dot VU0 path; 2: only paired
+// VU0 dot kernels, with standalone dots kept scalar. This isolates the real
+// batching gain from the single-dot transfer overhead in benchmarks.
+// Mode 0 remains default. Change only between completed world steps.
 void b3Ps2SetVU0Enabled( int enabled );
 int b3Ps2GetVU0Enabled( void );
 
@@ -30,3 +32,13 @@ void b3Ps2VU0Dot4( b3Ps2VU0Dot4Data* data );
 // four 16-byte-aligned records. Batching is required to amortize transfers.
 // This kernel alone does not alter the current per-contact solver layout.
 void b3Ps2VU0Dot4Batch4( b3Ps2VU0Dot4Data data[4] );
+
+// Two independent dot4 jobs fused in one macro-mode invocation. The
+// input layout is a pair of 16-byte-aligned 112-byte scratch records.
+typedef struct b3Ps2VU0Dot4PairData
+{
+    b3Ps2VU0Dot4Data pair[2];
+} b3Ps2VU0Dot4PairData;
+
+// Interleaves independent VU0 multiplies and adds to cover pipeline stalls.
+void b3Ps2VU0Dot4Pair( b3Ps2VU0Dot4PairData* data );

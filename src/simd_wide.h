@@ -66,3 +66,20 @@ typedef B3_WIDE( b3Vec3 ) b3Vec3W;
 #define b3AddVW B3_WIDE( b3AddV )
 #define b3DotW B3_WIDE( b3Dot )
 #define b3CrossW B3_WIDE( b3Cross )
+
+// Two independent dot products. Runtime mode 2 fuses the work into one
+// pipelined VU0 macro invocation. Other builds and modes retain the
+// original two scalar/legacy dots with identical arithmetic association.
+static inline void b3Dot2W( b3Vec3W a0, b3Vec3W b0, b3Vec3W a1, b3Vec3W b1,
+                            b3FloatW* out0, b3FloatW* out1 )
+{
+#if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
+    if ( b3Ps2GetVU0Enabled() == 2 )
+    {
+        b3DotPairW4( a0, b0, a1, b1, out0, out1 );
+        return;
+    }
+#endif
+    *out0 = b3DotW( a0, b0 );
+    *out1 = b3DotW( a1, b1 );
+}

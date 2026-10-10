@@ -17,16 +17,16 @@ _Static_assert( offsetof(b3Ps2VU0Dot4Data, out) == 96, "VU0 output offset" );
 
 _Static_assert( sizeof(b3Ps2VU0Dot4Data) % 16 == 0, "VU0 record stride" );
 
-static int s_vu0Enabled;
+static int s_vu0Mode;
 
-void b3Ps2SetVU0Enabled( int enabled )
+void b3Ps2SetVU0Enabled( int mode )
 {
-    s_vu0Enabled = enabled != 0;
+    s_vu0Mode = mode == 2 ? 2 : ( mode != 0 ? 1 : 0 );
 }
 
 int b3Ps2GetVU0Enabled( void )
 {
-    return s_vu0Enabled;
+    return s_vu0Mode;
 }
 
 void b3Ps2VU0Dot4( b3Ps2VU0Dot4Data* data )
@@ -100,5 +100,50 @@ void b3Ps2VU0Dot4Batch4( b3Ps2VU0Dot4Data data[4] )
     {
         b3Ps2VU0Dot4( &data[i] );
     }
+#endif
+}
+
+_Static_assert( sizeof(b3Ps2VU0Dot4PairData) == 224, "VU0 paired layout" );
+_Static_assert( _Alignof(b3Ps2VU0Dot4PairData) >= 16, "VU0 paired alignment" );
+_Static_assert( offsetof(b3Ps2VU0Dot4PairData, pair[1]) == 112, "VU0 paired offset" );
+
+void b3Ps2VU0Dot4Pair( b3Ps2VU0Dot4PairData* data )
+{
+#if defined(BOX3D_PS2) && (defined(__mips__) || defined(__mips))
+    // Both jobs have independent dependencies. Put all multiplies before
+    // either add, then stagger the two separate chains. This allows VU0's
+    // multiply/add pipeline to overlap while waiting for results.
+    //
+    // 0..96: first dot; 112..208: second. Base + every offset is 16B
+    // aligned. Stack layout is statically checked above.
+    __asm__ __volatile__(
+        "lqc2 $vf1, 0(%0)\n\t"
+        "lqc2 $vf2, 16(%0)\n\t"
+        "lqc2 $vf3, 32(%0)\n\t"
+        "lqc2 $vf4, 48(%0)\n\t"
+        "lqc2 $vf5, 64(%0)\n\t"
+        "lqc2 $vf6, 80(%0)\n\t"
+        "lqc2 $vf7, 112(%0)\n\t"
+        "lqc2 $vf8, 128(%0)\n\t"
+        "lqc2 $vf9, 144(%0)\n\t"
+        "lqc2 $vf10, 160(%0)\n\t"
+        "lqc2 $vf11, 176(%0)\n\t"
+        "lqc2 $vf12, 192(%0)\n\t"
+        "vmul.xyzw $vf13, $vf1, $vf2\n\t"
+        "vmul.xyzw $vf14, $vf7, $vf8\n\t"
+        "vmul.xyzw $vf15, $vf3, $vf4\n\t"
+        "vmul.xyzw $vf16, $vf9, $vf10\n\t"
+        "vmul.xyzw $vf17, $vf5, $vf6\n\t"
+        "vmul.xyzw $vf18, $vf11, $vf12\n\t"
+        "vadd.xyzw $vf13, $vf13, $vf15\n\t"
+        "vadd.xyzw $vf14, $vf14, $vf16\n\t"
+        "vadd.xyzw $vf13, $vf13, $vf17\n\t"
+        "vadd.xyzw $vf14, $vf14, $vf18\n\t"
+        "sqc2 $vf13, 96(%0)\n\t"
+        "sqc2 $vf14, 208(%0)"
+        : : "r"(data) : "memory");
+#else
+    b3Ps2VU0Dot4( &data->pair[0] );
+    b3Ps2VU0Dot4( &data->pair[1] );
 #endif
 }
