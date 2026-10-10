@@ -1172,3 +1172,9 @@ long-running stability, 400-awake throughput, and shadowed 60 FPS.
 A shadowed 60 FPS frame still requires total physics + draw + GS
 wait below 16.67 ms, including optimization beyond the normal
 impulse kernel.
+
+The batched normal pass retains each SIMD4 group's EE body state
+across successive contact points and scatters velocities once per
+group at the end of its batch, avoiding repeated gathers/scatters.
+Live validation always checks VU0 output finiteness, while full EE
+numeric recomputation is sampled to limit per-frame overhead.

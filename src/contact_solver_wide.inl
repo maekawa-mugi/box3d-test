@@ -1216,7 +1216,6 @@ typedef struct b3Ps2BatchNormalSlot
     b3ContactConstraintWide* c;
     b3ContactManifoldWide* cm;
     b3ContactConstraintPointWide* cp;
-    b3BodyStateW bA,bB;
     b3Vec3W rA,rB;
     int groupIndex;
 } b3Ps2BatchNormalSlot;
@@ -1233,6 +1232,8 @@ B3_FORCE_INLINE void b3SolveBatchedNormalsW4( b3SolverBlock block, b3StepContext
     {
         b3ContactConstraintWide* constraint[B3_PS2_VU0_BATCH_GROUPS];
         b3ContactManifoldWide* manifold[B3_PS2_VU0_BATCH_GROUPS];
+        b3BodyStateW bodyA[B3_PS2_VU0_BATCH_GROUPS];
+        b3BodyStateW bodyB[B3_PS2_VU0_BATCH_GROUPS];
         b3FloatW totalNormal[B3_PS2_VU0_BATCH_GROUPS];
         b3FloatW totalTwist[B3_PS2_VU0_BATCH_GROUPS];
         b3Ps2BatchNormalSlot slots[B3_PS2_VU0_BATCH_GROUPS];
@@ -1249,6 +1250,8 @@ B3_FORCE_INLINE void b3SolveBatchedNormalsW4( b3SolverBlock block, b3StepContext
         {
             scratch.constraint[g] = c;
             scratch.manifold[g] = b3GetManifoldsW( c );
+            scratch.bodyA[g] = b3GatherBodies( states, c->indexA );
+            scratch.bodyB[g] = b3GatherBodies( states, c->indexB );
             scratch.totalNormal[g] = zeroW;
             scratch.totalTwist[g] = zeroW;
             if ( scratch.manifold[g]->pointCount > maxPoints )
@@ -1269,22 +1272,22 @@ B3_FORCE_INLINE void b3SolveBatchedNormalsW4( b3SolverBlock block, b3StepContext
                 slot->cm = cm;
                 slot->cp = cm->points + point;
                 slot->groupIndex = g;
-                slot->bA = b3GatherBodies( states, current->indexA );
-                slot->bB = b3GatherBodies( states, current->indexB );
                 slot->rA = slot->cp->anchorAs;
                 slot->rB = slot->cp->anchorBs;
 
-                b3Vec3W dp = b3SubVW( slot->bB.dp, slot->bA.dp );
+                const b3BodyStateW* bA = scratch.bodyA + g;
+                const b3BodyStateW* bB = scratch.bodyB + g;
+                b3Vec3W dp = b3SubVW( bB->dp, bA->dp );
                 b3FloatW separation = b3DotW( cm->normal, dp );
-                b3Vec3W normalA = b3InvRotateVectorW( slot->bA.dq, cm->normal );
-                b3Vec3W normalB = b3InvRotateVectorW( slot->bB.dq, cm->normal );
+                b3Vec3W normalA = b3InvRotateVectorW( bA->dq, cm->normal );
+                b3Vec3W normalB = b3InvRotateVectorW( bB->dq, cm->normal );
                 b3FloatW dotB, dotA;
                 b3Dot2W( normalB, slot->rB, normalA, slot->rA, &dotB, &dotA );
                 b3FloatW s = b3AddW( b3AddW( separation, b3SubW( dotB, dotA ) ),
                                       slot->cp->baseSeparations );
                 b3FloatW bias = b3MaxW( zeroW, b3MulW( s, inv_h ) );
-                b3Vec3W vrA = b3AddVW( slot->bA.v, b3CrossW( slot->bA.w, slot->rA ) );
-                b3Vec3W vrB = b3AddVW( slot->bB.v, b3CrossW( slot->bB.w, slot->rB ) );
+                b3Vec3W vrA = b3AddVW( bA->v, b3CrossW( bA->w, slot->rA ) );
+                b3Vec3W vrB = b3AddVW( bB->v, b3CrossW( bB->w, slot->rB ) );
                 b3FloatW vn = b3DotW( b3SubVW( vrB, vrA ), cm->normal );
 
                 b3Ps2VU0NormalSolveData* input = scratch.inputs + active;
@@ -1337,13 +1340,21 @@ B3_FORCE_INLINE void b3SolveBatchedNormalsW4( b3SolverBlock block, b3StepContext
                 scratch.totalTwist[slot->groupIndex] = b3LoadW4( input->newTwistLimit );
 
                 b3Vec3W P = b3MulSVW( delta, slot->cm->normal );
-                slot->bA.w = b3MulSubMVW( slot->bA.w, slot->c->invIA, b3CrossW( slot->rA, P ) );
-                slot->bA.v = b3MulSubSVW( slot->bA.v, slot->c->invMassA, P );
-                slot->bB.w = b3MulAddMVW( slot->bB.w, slot->c->invIB, b3CrossW( slot->rB, P ) );
-                slot->bB.v = b3MulAddSVW( slot->bB.v, slot->c->invMassB, P );
-                b3ScatterBodies( states, slot->c->indexA, &slot->bA );
-                b3ScatterBodies( states, slot->c->indexB, &slot->bB );
+                b3BodyStateW* bA = scratch.bodyA + slot->groupIndex;
+                b3BodyStateW* bB = scratch.bodyB + slot->groupIndex;
+                bA->w = b3MulSubMVW( bA->w, slot->c->invIA, b3CrossW( slot->rA, P ) );
+                bA->v = b3MulSubSVW( bA->v, slot->c->invMassA, P );
+                bB->w = b3MulAddMVW( bB->w, slot->c->invIB, b3CrossW( slot->rB, P ) );
+                bB->v = b3MulAddSVW( bB->v, slot->c->invMassB, P );
             }
+        }
+        // Within the graph color the bodies are independent; commit
+        // each body's final normal velocity once, not once per point.
+        for ( int g = 0; g < count; ++g )
+        {
+            b3ContactConstraintWide* current = scratch.constraint[g];
+            b3ScatterBodies( states, current->indexA, scratch.bodyA + g );
+            b3ScatterBodies( states, current->indexB, scratch.bodyB + g );
         }
     }
 }

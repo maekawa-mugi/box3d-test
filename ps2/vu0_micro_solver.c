@@ -224,12 +224,25 @@ int b3Vu0MicroNormalSolveBatch(b3Ps2VU0NormalSolveData* records,
         memcpy(&s_microData.record[g],&records[g],sizeof(records[g]));
     if(!b3Vu0MicroRunBlock(&s_microData,groups))return -1;
 
-    // Validate real non-binary contact values on the first 16 batches,
-    // then sample every 256th batch; always reject nonfinite results.
+    // Full EE numerical comparison during early live calls and every
+    // 256th call. Otherwise only check finiteness to avoid reproducing
+    // the entire VU0 workload on EE for every micro batch.
     int compare=(s_liveCalls<16u || (s_liveCalls&255u)==0u);
     for(unsigned g=0;g<groups;++g)
     {
         const b3Vu0MicroRecord* got=&s_microData.record[g];
+        const float* output=got->newImpulse;
+        for(unsigned k=0;k<20u;++k)
+        {
+            if(!isfinite(output[k]))
+            {
+                printf("BOX3D_VU0_FAIL,batch_nonfinite,group=%u,output=%u\n",g,k);
+                s_verified=0;
+                s_status="VU0 FAIL BATCH NAN";
+                return -1;
+            }
+        }
+        if(!compare)continue;
         const b3Ps2VU0NormalSolveData* input=&records[g];
         for(unsigned lane=0;lane<4u;++lane)
         {
@@ -249,9 +262,8 @@ int b3Vu0MicroNormalSolveBatch(b3Ps2VU0NormalSolveData* records,
             };
             for(unsigned k=0;k<5u;++k)
             {
-                const float tolerance=0.002f*(1.0f+fabsf(expected[k]));
-                if(!isfinite(actual[k]) || !isfinite(expected[k]) ||
-                   (compare && fabsf(actual[k]-expected[k])>tolerance))
+                float tolerance=0.002f*(1.0f+fabsf(expected[k]));
+                if(!isfinite(expected[k]) || fabsf(actual[k]-expected[k])>tolerance)
                 {
                     printf("BOX3D_VU0_FAIL,batch_diff,group=%u,lane=%u,field=%u,expected=%f,got=%f\n",
                            g,lane,k,(double)expected[k],(double)actual[k]);
