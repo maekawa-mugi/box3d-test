@@ -483,7 +483,9 @@ void b3GsShadowBegin(void)
     b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,1),GS_REG_ZBUF_1);
     b3GsKawaseTarget(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H);
     b3GsKawaseClear(B3_PS2_GS_W,B3_PS2_GS_H);
-    b3GsAD(GS_SET_TEST(0,0,0,0,0,0,1,2),GS_REG_TEST_1);
+    // The receiver polygon is geometrically clipped. Do not Z-discard
+    // it against checker-floor triangles with different tessellation.
+    // The renderer composites shadows before subsequent opaque objects.
 }
 void b3GsShadowEnd(void)
 {
@@ -529,7 +531,10 @@ void b3GsShadowEnd(void)
                    B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,-2, 2);
     b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
                    B3_KAWASE_HALF_W,B3_KAWASE_HALF_H, 2, 2);
-    // Subsequent HUD is written directly onto main color framebuffer.
+    // Restore the depth test before drawing another receiver or the
+    // dynamic boxes. The shadow mask itself must not alter scene depth.
+    b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,0),GS_REG_ZBUF_1);
+    b3GsAD(GS_SET_TEST(0,0,0,0,0,0,1,2),GS_REG_TEST_1);
 }
 
 // Diagnostic overlays deliberately bypass GS alpha/depth tests.
@@ -576,13 +581,16 @@ void b3GsShadowBegin(void)
     // Stop writing depth, so overlapped shadows don't block other bodies.
     s_shadowPass=1;
     b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,1),GS_REG_ZBUF_1);
-    // (Cs-Cd)*As + Cd, source alpha 80/128 ~= 63% shadow darkening.
+    // These convex silhouettes are clipped to the receiver. Foreground
+    // occluders will be drawn AFTER the overlay, avoiding shadow holes.
+    b3GsAD(GS_SET_TEST(0,0,0,0,0,0,0,0),GS_REG_TEST_1);
     b3GsAD(GS_SET_ALPHA(0,1,0,1,0),GS_REG_ALPHA_1);
 }
 void b3GsShadowEnd(void)
 {
     s_shadowPass=0;
     b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,0),GS_REG_ZBUF_1);
+    b3GsAD(GS_SET_TEST(0,0,0,0,0,0,1,2),GS_REG_TEST_1);
 }
 #endif
 
