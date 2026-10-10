@@ -459,9 +459,16 @@ static void render_official_hud(void)
     // A restrained top-left scene panel approximating ImGui sample
     // information, but all glyph pixels are native GS sprites.
     b3GsOverlayBegin();
+#if defined(BOX3D_GS_KAWASE_SHADOWS)
+    b3GsOverlayPanel(7,7,152,49);
+#else
     b3GsOverlayPanel(7,7,152,37);
+#endif
     b3GsOverlayText(14,12,"BOX3D   PS2",239,245,247);
     b3GsOverlayText(14,25,sceneNames[s_scene.kind],189,214,223);
+#if defined(BOX3D_GS_KAWASE_SHADOWS)
+    b3GsOverlayText(14,37,"SOFT GS KAWASE",188,226,240);
+#endif
 }
 #endif
 static void render(void)

@@ -230,3 +230,23 @@ UV/XY sampling offsets, and blurred silhouettes bleeding a few pixels
 across depth discontinuities. Older hard-shadow / no-shadow ELFs remain
 available. PCSX2 screenshots and console timing logs are needed before
 claiming the effect renders or keeps 60fps.
+
+### Approximate GS VRAM budget, PSMCT32
+
+The GS soft edition uses PS2SDK's page-aligned VRAM allocator (in 32-bit
+words), with widths rounded to a 64-pixel TBW multiple. The approximate
+allocation is:
+
+| Render target | Allocation in 32-bit words |
+| --- | ---: |
+| Two 320x224 color buffers | 143360 |
+| One 320x224 depth buffer | 71680 |
+| Full resolution 320x224 shadow coverage | 71680 |
+| Two 160x112 half-resolution ping-pong surfaces | 45056 |
+| Two 80x56 quarter-resolution ping-pong surfaces | 16384 |
+| **Total** | **348160 words (1,392,640 bytes)** |
+
+This remains under the PS2's 4MiB GS local memory limit, leaving room for
+more detailed meshes, textures, light masks and screen-space passes.
+The final HUD explicitly prints `SOFT GS KAWASE` in this variant so
+screenshots cannot be confused with the hard-shadow edition.
