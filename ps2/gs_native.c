@@ -173,7 +173,8 @@ void b3GsPresent(void)
 {
     // One GIF PACKED tag (NREG=1, A+D), followed by raw 128b A+D pairs.
     // Finish event is emitted by GS after all prior drawing.
-    b3GsAD(0, GS_REG_FINISH);
+    // PS2SDK draw_finish convention: write 1 to GS FINISH register.
+    b3GsAD(1, GS_REG_FINISH);
     if (s_errors) printf("BOX3D_GS_WARNING,packet_overflow=%d\n",s_errors);
     s_packet[0].data = GIF_SET_TAG(s_used - 1, 1, 0, 0, GIF_FLG_PACKED, 1);
     s_packet[0].reg = GIF_REG_AD;
