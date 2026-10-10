@@ -111,3 +111,60 @@ rendered box faces and the actual total GIF A+D packet qwords. The
 GS submission is a *single DMA transfer per frame*, already batched
 into 128-bit GIF qwords. **VU1 VIF DMA vertex transformation remains
 unimplemented**, and 480p PCSX2/hardware validation is still pending.
+
+## Native GS expanded Kawase and controller update
+
+The separate `box3d_ps2_samples_kawase_wide.elf` (320x224)
+adds a disjoint 40x28 eighth-resolution level and the corresponding
+ping-pong target, costing **2 x 8192 bytes = 16KiB** of GS 4MiB VRAM
+relative to the old two-level pyramid. The path is:
+
+`320x224 -> 160x112 -> 80x56 -> 40x28 (ping-pong) ->
+80x56 -> 160x112 -> full-resolution final composite`.
+
+The `box3d_ps2_samples_kawase_wide_progressive.elf` applies the
+same **1/8** ratio at 640x480: its stages are 320x240, 160x120,
+and 80x60, each with separate source/destination buffers. Its total
+page-rounded GS VRAM surface budget is **3,956,736 / 4,194,304 bytes**,
+leaving only 237,568 bytes for other GS resources. For the normal
+320x224 case, each 40x28 PSMCT32 page requires precisely 8192 bytes.
+The Kawase additions involve more GIF register writes, raster passes
+and GPU bandwidth; no speedup is implied.
+
+The formerly hardcoded `TEX0` TW/TH for the 320x224 shadow mask is
+now calculated using the **ceil(log2(width/height))** of each
+active source render target. The correct exponent pair for the
+640x480 mask is **10/9**, rather than 9/8. At 40x28 it is
+**6/5**. Full logical target dimensions still bound GS CLAMP to
+exclude unused padded texture texels.
+
+Both the 480p PCF variant and the two expanded Kawase variants enable
+PS2SDK `libpad` navigation. LEFT/RIGHT on port 0/slot 0 switches
+immediately to previous/next scene, with edge detection rather than
+repeated cycling while held. The six IOP/EE pad module and RPC calls
+are based on PS2SDK's own pad demo. If the modules/controller cannot
+be opened, the normal 600-frame auto-cycle still works.
+
+The 480p progressive variant (PCF 4tap or expanded Kawase) now has
+**eight** scenes including the real
+`samples/sample_ragdoll.cpp` `Ragdoll/Box` human:
+`CreateHuman()` in the original `shared/human.c` creates 12
+Box3D capsule bodies with articulated joint constraints. The native
+GS renders axis-aligned-to-body cuboids positioned at the capsule
+midpoints rather than full rounded capsule meshes. The old 320px
+viewers retain three original scenes, with no fake "full ragdoll"
+claim for them.
+
+Portable layout test (no PS2DEV necessary):
+```sh
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  ps2/kawase_layout_test.c -o /tmp/kawase_layout
+/tmp/kawase_layout
+```
+
+**This is new unverified crosscompiler/PCS​​X2 code**, not a
+confirmed working 480p ragdoll or extended shadow pipeline. The
+first test should verify the left/right pad controls, full-screen
+shadow blur without 2x2 lobe artifacts, TEX0 addressing and actual
+480p frame output. No CI result is required for this user-requested
+work.
