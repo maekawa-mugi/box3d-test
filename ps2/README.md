@@ -154,8 +154,8 @@ prefilter target is now allocated with page-height padding to 320x256
 the full-res silhouette before a nine-tap 3x3 tent (sum FIX=96) with
 radius-dependent offsets. At radius 1 the proven four-bilinear-tap
 full-res PCF remains unchanged. The unified scene's four GS surfaces
-and prefilter occupy **3,522,560 of 4,194,304 bytes**, leaving
-**671,744 bytes**. There is no new ELF and no new CPU per-pixel blur.
+and prefilter occupy **3,620,864 of 4,194,304 bytes**, leaving
+**573,440 bytes**. There is no new ELF and no new CPU per-pixel blur.
 
 The updated on-screen panel shows `PHYS` and `DRAW` separately and
 calls the DMA/FINISH metric `GSWAIT`, so an EE Box3D solver bottleneck
@@ -211,3 +211,61 @@ in the worst case; 256/400-box performance should therefore be
 **re-measured**, not assumed faster. The host grouping algorithm has
 passed its regression test, but **the newly pushed GS output has not
 yet been rebuilt or visually confirmed on PCSX2**.
+
+## 2026-10-10: no duplicate silhouettes in single 480p PCSS ELF
+
+The software-renderer screenshot of Spinning Books showed **two
+distinct dark traces** at the edge of one softened shadow, even after
+the previous prefilter pass. There were *two separate bugs*:
+
+- **Multiple subtractive passes:** radius-bucket shadow masks were
+  composited directly onto the scene one after another. When
+  silhouettes from different radius buckets touched, the same
+  screen pixel was darkened repeatedly. The new
+  `ps2/shadow_group.h` groups all casters whose *kernel-expanded*
+  projected silhouettes overlap (including transitive chains).
+  Each resulting connected component is rasterized as ONE GS
+  coverage mask, and the scene is subtracted from only once.
+  Isolated shadows retain independent PCSS radii. For overlapping
+  silhouettes, the group's maximum radius is chosen to preserve
+  soft separation without exposing a duplicate harder silhouette.
+- **Sparse final taps:** the previous far PCSS nine-tap blend placed
+  distinguishable copies of the same mask at `+/-(radius-1)` screen
+  pixels. The new `pcss_filter_tiers.h` uses REAL GS bilinear
+  2:1 downsamples instead: radius 1 samples the full-resolution
+  640x480 mask with four bilinear taps, radii 2-3 use the 320x240
+  prefilter, and radii 4-5 use a new disjoint 160x120 prefilter.
+  The final 3x3 9-tap kernel has at most +/-1 screen-pixel spacing
+  for every distance, so distant shadows blur continuously rather
+  than splitting into parallel stripes.
+
+The additional physical 160x120 PSMCT32 GS target uses a 192x128
+page-rounded allocation (**98,304 bytes**). Total VRAM allocation
+for the unified double-buffered 480p scene, Z, full-resolution mask,
+half-resolution and quarter-resolution prefilters is now
+**3,620,864 / 4,194,304 bytes**, leaving **573,440 bytes**. No new
+ELF, no new sample mode, no CPU pixel blur.
+
+The new serial log `BOX3D_PCSS_UNION` reports `casters`,
+`components` and `composites`. Overlapping silhouettes should
+produce `components=1,composites=1`. The following portable C17
+regressions test overlap merging and blur tier limits:
+
+```sh
+cc -std=c17 -O2 -Wall -Wextra -Werror -pedantic \
+  ps2/shadow_group_test.c -o /tmp/shadow_group_test
+/tmp/shadow_group_test
+cc -std=c17 -O2 -Wall -Wextra -Werror -pedantic \
+  ps2/pcss_filter_tiers_test.c -o /tmp/pcss_filter_tiers_test
+/tmp/pcss_filter_tiers_test
+cc -std=c17 -O2 -Wall -Wextra -Werror -pedantic \
+  ps2/kawase_layout_test.c -o /tmp/kawase_layout_test
+/tmp/kawase_layout_test
+```
+
+**The C17 overlap/tier helper tests pass. New R5900 ELF linking and
+PCS​​X2 output are unverified here.** If duplicate shadows remain,
+capture Spinning Books plus the corresponding
+`BOX3D_PCSS_UNION` log: if only one component and one composite
+are reported, investigate GS texture sampling/texel alignment
+rather than repeated caster passes.

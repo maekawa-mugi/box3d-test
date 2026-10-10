@@ -257,3 +257,20 @@ ELF variants or rendering features are needed to correct this.
 
 **The 480p software-renderer screenshot precedes this fix; the
 revised PS2DEV ELF and PCSX2 render still need tester confirmation.**
+
+## Unified 480p PCSS overlap-union and compact filter (2026-10-10)
+
+The active single ELF is `ps2/box3d_ps2.elf`, NOT the experimental
+multi-variant build list earlier in this historical file. The current
+software renderer double-shadow correction unions intersecting PCSS
+penumbra bounds into one GS coverage mask/scene composite per connected
+component and uses a 2:1 or 4:1 disjoint PSMCT32 bilinear prefilter
+instead of sparse multiply displaced final tap sprites.
+`ps2/pcss_filter_tiers.h` maps PCSS radius 1 to 640x480, radius
+2-3 to 320x240, radius 4-5 to 160x120. Each 3x3 reconstruction is
+tight (+/-1 pixel) with separable tent weights. One physical quarter
+render target costs 98,304 bytes. Current unified 480p memory usage is
+3,620,864 bytes, with 573,440 bytes free. Older Kawase layout
+figures in the earlier sections refer to archived variants only.
+
+R5900 and PCSX2 correctness and FPS for this change are not yet verified.
