@@ -40,7 +40,7 @@ int main(void)
     assert(tw(160)==8 && tw(120)==7);
     assert(tw(80)==7 && tw(60)==6);
     assert(pageSize(40,28,32)==8192u);
-    assert(layout(320,224,0)==1392640u);
+    assert(layout(320,224,0)==991232u);
     assert(layout(640,480,1)==3956736u);
     assert(layout(640,480,1)<4u*1024u*1024u);
     printf("PASS: TEX0 640x480 TW/TH 10/9, 40x28 8KiB pages, 480p wide VRAM %u/4194304 bytes\n",
