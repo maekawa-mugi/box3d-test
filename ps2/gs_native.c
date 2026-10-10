@@ -48,10 +48,18 @@ static int s_errors;
 static int s_shadowPass;
 #endif
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
-#define B3_KAWASE_HALF_W 160
-#define B3_KAWASE_HALF_H 112
-#define B3_KAWASE_QUARTER_W 80
-#define B3_KAWASE_QUARTER_H 56
+// Scale each stage with internal resolution. 320x224 -> 160x112
+// -> 80x56 -> 40x28. The progressive edition uses 640x480 ->
+// 320x240 -> 160x120 -> 80x60.
+#define B3_KAWASE_HALF_W (B3_PS2_GS_W/2)
+#define B3_KAWASE_HALF_H (B3_PS2_GS_H/2)
+#define B3_KAWASE_QUARTER_W (B3_PS2_GS_W/4)
+#define B3_KAWASE_QUARTER_H (B3_PS2_GS_H/4)
+#if defined(BOX3D_GS_KAWASE_WIDE)
+#define B3_KAWASE_EIGHTH_W (B3_PS2_GS_W/8)
+#define B3_KAWASE_EIGHTH_H (B3_PS2_GS_H/8)
+static int s_eighthMask[2];
+#endif
 static int s_shadowMask;
 static int s_halfMask[2];
 static int s_quarterMask[2];
@@ -129,9 +137,17 @@ int b3GsInit(void)
                                          GS_PSM_32,GRAPH_ALIGN_PAGE);
         s_quarterMask[i]=graph_vram_allocate(B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H,
                                             GS_PSM_32,GRAPH_ALIGN_PAGE);
+#if defined(BOX3D_GS_KAWASE_WIDE)
+        s_eighthMask[i]=graph_vram_allocate(B3_KAWASE_EIGHTH_W,B3_KAWASE_EIGHTH_H,
+                                            GS_PSM_32,GRAPH_ALIGN_PAGE);
+#endif
     }
     if(s_shadowMask<0 || s_halfMask[0]<0 || s_halfMask[1]<0 ||
-       s_quarterMask[0]<0 || s_quarterMask[1]<0)
+       s_quarterMask[0]<0 || s_quarterMask[1]<0
+#if defined(BOX3D_GS_KAWASE_WIDE)
+       || s_eighthMask[0]<0 || s_eighthMask[1]<0
+#endif
+       )
     {
         puts("BOX3D_GS_FAIL,kawase_vram_allocation");
         return 0;
@@ -508,12 +524,22 @@ static void b3GsKawaseClear(int width,int height)
 // GS bilinear texture source; never read and render into the same VRAM
 // buffer in one pass. TEXFLUSH invalidates GS texture cache on each pass.
 // Region clamp avoids sampling the undefined padded TBW/TW/TH texels.
+// TEX0 TW/TH are exponents of the texture allocation dimensions.
+// 640x480 requires 2^10 x 2^9 (not legacy 2^9 x 2^8);
+// 40x28 requires 2^6 x 2^5. Derive for EVERY texture stage.
+static int b3GsTexLog2(int size)
+{
+    int exp=0,pow=1;
+    while(pow<size && exp<10){pow<<=1;++exp;}
+    return exp;
+}
 static void b3GsKawaseSource(int vram,int width,int height,
                              int tw,int th)
 {
+    (void)tw;(void)th; // legacy call hints intentionally not authoritative
     b3GsAD(GS_SET_TEXFLUSH(0),GS_REG_TEXFLUSH);
     b3GsAD(GS_SET_TEX0_SMALL(vram>>6,(width+63)>>6,GS_PSM_32,
-                              tw,th,1,1),GS_REG_TEX0_1);
+                              b3GsTexLog2(width),b3GsTexLog2(height),1,1),GS_REG_TEX0_1);
     b3GsAD(GS_SET_TEX1(1,0,1,1,0,0,0),GS_REG_TEX1_1);
     b3GsAD(GS_SET_CLAMP(2,2,0,width-1,0,height-1),GS_REG_CLAMP_1);
     b3GsAD(GS_SET_RGBAQ(128,128,128,128,0x3f800000),GS_REG_RGBAQ);
@@ -699,11 +725,26 @@ void b3GsShadowEnd(void)
     b3GsKawasePass(s_quarterMask[0],B3_KAWASE_QUARTER_W,
                    B3_KAWASE_QUARTER_H,s_halfMask[0],
                    B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,8,7,1);
-    // Intermediate quarter-resolution ping-pong sharpens control of
-    // the effective blur radius with only a few 80x56 sprite passes.
+#if defined(BOX3D_GS_KAWASE_WIDE)
+    // Broad but continuous blur: progressive downsamples with a single
+    // texel-step at each level, instead of spreading just four distant
+    // samples of the original full-resolution mask.
+    // All reads/writes are disjoint VRAM buffers.
+    b3GsKawasePass(s_eighthMask[0],B3_KAWASE_EIGHTH_W,
+                   B3_KAWASE_EIGHTH_H,s_quarterMask[0],
+                   B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H,0,0,1);
+    b3GsKawasePass(s_eighthMask[1],B3_KAWASE_EIGHTH_W,
+                   B3_KAWASE_EIGHTH_H,s_eighthMask[0],
+                   B3_KAWASE_EIGHTH_W,B3_KAWASE_EIGHTH_H,0,0,1);
+    b3GsKawasePass(s_quarterMask[1],B3_KAWASE_QUARTER_W,
+                   B3_KAWASE_QUARTER_H,s_eighthMask[1],
+                   B3_KAWASE_EIGHTH_W,B3_KAWASE_EIGHTH_H,0,0,1);
+#else
+    // Original quarter-res version remains available as comparison.
     b3GsKawasePass(s_quarterMask[1],B3_KAWASE_QUARTER_W,
                    B3_KAWASE_QUARTER_H,s_quarterMask[0],
                    B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H,7,6,1);
+#endif
     // Upsample/Kawase blur: quarter -> half, separate VRAM page.
     b3GsKawasePass(s_halfMask[1],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
                    s_quarterMask[1],B3_KAWASE_QUARTER_W,
