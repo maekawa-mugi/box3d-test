@@ -852,6 +852,11 @@ static const uint8_t s_font[36][7]={
 void b3GsOverlayText(int x,int y,const char* text,uint8_t r,uint8_t g,uint8_t b)
 {
     if(text==NULL) return;
+#if defined(BOX3D_GS_PROGRESSIVE)
+    const int scale=2;
+#else
+    const int scale=1;
+#endif
     b3GsAD(GS_SET_PRIM(6,0,0,0,0,0,0,0,0),GS_REG_PRIM);
     b3GsAD(GS_SET_RGBAQ(r,g,b,0x80,0x3f800000),GS_REG_RGBAQ);
     for(const unsigned char* cp=(const unsigned char*)text;*cp;++cp)
@@ -871,14 +876,15 @@ void b3GsOverlayText(int x,int y,const char* text,uint8_t r,uint8_t g,uint8_t b)
                     if(mask & (1u << (4-col)))
                     {
                         if(s_used+3>=B3_GS_QWORDS){++s_errors;return;}
-                        b3GsAD(b3GsXYZ(x+col,y+row),GS_REG_XYZ2);
-                        b3GsAD(b3GsXYZ(x+col+1,y+row+1),GS_REG_XYZ2);
+                        b3GsAD(b3GsXYZ(x+col*scale,y+row*scale),GS_REG_XYZ2);
+                        b3GsAD(b3GsXYZ(x+(col+1)*scale,
+                                        y+(row+1)*scale),GS_REG_XYZ2);
                     }
                 }
             }
         }
-        x+=6;
-        if(x>B3_PS2_GS_W-6)break;
+        x+=6*scale;
+        if(x>B3_PS2_GS_W-6*scale)break;
     }
 }
 #else

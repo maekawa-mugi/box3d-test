@@ -200,6 +200,11 @@ static void scene_create(int kind)
         s_scene.camera=b3GsLookAt(pt(10,7,13),pt(0,2,0),215);
         puts("BOX3D_SAMPLE_SCENE,Bodies/SpinningBooks,books=3");
     }
+#if defined(BOX3D_GS_PROGRESSIVE)
+    // Desktop sample cameras use 320x224 reference focal parameters.
+    // Double focal length on the high-res display to preserve FOV.
+    s_scene.camera.focal*=2.0f;
+#endif
 }
 
 static void draw_box(const SceneBody* body)
@@ -239,6 +244,19 @@ static void draw_box(const SceneBody* body)
         for(int face=0;face<6;++face)
         {
             b3Vec3 n=b3RotateVector(q,faceNormals[face]);
+#if defined(BOX3D_GS_PROGRESSIVE)
+            // EE back-face culling before 2-triangle emission.
+            // About half of convex box faces are not visible from a
+            // camera outside the hull. Retains GS Z for occlusion.
+            b3Pos center=b3Body_GetPosition(body->id);
+            b3Vec3 toEye={
+                s_scene.camera.eye.x-(float)center.x,
+                s_scene.camera.eye.y-(float)center.y,
+                s_scene.camera.eye.z-(float)center.z
+            };
+            if(n.x*toEye.x+n.y*toEye.y+n.z*toEye.z<=0.0f)
+                continue;
+#endif
             float diffuse=n.x*light.x+n.y*light.y+n.z*light.z;
             if(diffuse<0)diffuse=0;
 #if defined(BOX3D_GS_OFFICIAL)
@@ -529,6 +547,11 @@ static void render_official_hud(void)
     // A restrained top-left scene panel approximating ImGui sample
     // information, but all glyph pixels are native GS sprites.
     b3GsOverlayBegin();
+#if defined(BOX3D_GS_PROGRESSIVE)
+    b3GsOverlayPanel(14,14,310,104);
+    b3GsOverlayText(28,24,"BOX3D   PS2",239,245,247);
+    b3GsOverlayText(28,53,sceneNames[s_scene.kind],189,214,223);
+#else
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
     b3GsOverlayPanel(7,7,152,49);
 #else
@@ -536,19 +559,34 @@ static void render_official_hud(void)
 #endif
     b3GsOverlayText(14,12,"BOX3D   PS2",239,245,247);
     b3GsOverlayText(14,25,sceneNames[s_scene.kind],189,214,223);
+#endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
     b3GsOverlayText(14,37,"GS PCSS HEIGHT",188,226,240);
     b3GsOverlayPanel(206,184,106,30);
     b3GsOverlayText(214,195,"PCSS 3D",250,236,130);
 #elif defined(BOX3D_GS_PCF_SHADOWS)
+#if defined(BOX3D_GS_PCF_4TAP)
+#if defined(BOX3D_GS_PROGRESSIVE)
+    b3GsOverlayText(28,82,"PCF 4 TAP 480P",188,226,240);
+#else
+    b3GsOverlayText(14,37,"GS PCF 4 TAP",188,226,240);
+#endif
+#else
     b3GsOverlayText(14,37,"GS PCF 3X3",188,226,240);
+#endif
     // Duplicate the build identity in the lower-right safe area.
     // Test screenshots have sometimes been cropped so that the entire
     // upper part of the HUD is outside the captured frame, leaving
     // only the dark panel's lower edge visible. A second label also
     // differentiates PCF from Kawase even when only the floor is shown.
+#if defined(BOX3D_GS_PROGRESSIVE)
+    b3GsOverlayPanel(B3_PS2_GS_W-210,B3_PS2_GS_H-75,198,58);
+    b3GsOverlayText(B3_PS2_GS_W-192,B3_PS2_GS_H-56,
+                    "480P 4TAP",250,236,130);
+#else
     b3GsOverlayPanel(219,184,93,30);
     b3GsOverlayText(227,195,"PCF 3X3",250,236,130);
+#endif
 #elif defined(BOX3D_GS_KAWASE_SHADOWS)
     b3GsOverlayText(14,37,"SOFT GS KAWASE",188,226,240);
 #endif
