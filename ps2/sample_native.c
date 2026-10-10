@@ -15,6 +15,9 @@
 #if defined(BOX3D_GS_RECEIVER_SHADOWS)
 #include "shadow_project.h"
 #endif
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+#include "shadow_penumbra.h"
+#endif
 
 #include <kernel.h>
 #include <math.h>
@@ -410,14 +413,17 @@ static void render_receiver_shadows(int receiver)
     // Same directional-light orientation as the face lighting.
     const b3ShadowVec3 direction={-0.44f,-0.82f,-0.36f};
 
-    // A receiver is already drawn. Its shadow polygon is clipped
-    // geometrically to the receiver bounds, and the next, opaque
-    // geometry pass covers shadows on occluders. Do NOT Z-test the mask
-    // here: the GS shadow/floor triangulations have different pixel
-    // coverage rules, which was destroying most of the mask.
+    // A receiver is already drawn. Shadows are clipped to its finite
+    // shape. In the PCSS-inspired mode each individual caster gets a
+    // separate mask/filter pass, so penumbra radius can vary per body.
+#if !defined(BOX3D_GS_PCSS_SHADOWS)
     b3GsShadowBegin();
+#endif
     {
         b3ShadowReceiver plane=makeReceiver(receiver);
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+        int minRadius=5, maxRadius=0;
+#endif
         for(int caster=1;caster<s_scene.count;++caster)
         {
             if(caster==receiver)continue;
@@ -427,10 +433,63 @@ static void render_receiver_shadows(int receiver)
             if(b3ShadowProjectBox(corners,direction,&plane,&poly)<3)
                 continue;
 
-            // A single convex silhouette fan, rather than overlapping
-            // top/bottom-face quads. This prevents alpha over-darkening
-            // within one box's shadow and missing rotated silhouettes.
+            // A single convex silhouette fan avoids intra-caster
+            // alpha overdraw. PCSS mode filters every caster separately
+            // to preserve the contact-hardening property.
             ++projectedHulls;
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+            // Distance between the nearest box corner and its receiving
+            // plane. Contact/penetration -> radius 1, floating -> wider.
+            float gap=1000000.0f;
+            for(int v=0;v<8;++v)
+            {
+                const b3ShadowVec3 p=corners[v];
+                float height=(p.x-plane.origin.x)*plane.normal.x+
+                             (p.y-plane.origin.y)*plane.normal.y+
+                             (p.z-plane.origin.z)*plane.normal.z;
+                if(height<gap)gap=height;
+            }
+            if(gap<0.0f)gap=0.0f;
+
+            // Projected pixel scale accounts for camera zoom/distance,
+            // not just world-space height. The 0.08 scale is a tunable
+            // approximation of finite-area emitter angular diameter.
+            float cameraZ=
+                (plane.origin.x-s_scene.camera.eye.x)*s_scene.camera.forward.x+
+                (plane.origin.y-s_scene.camera.eye.y)*s_scene.camera.forward.y+
+                (plane.origin.z-s_scene.camera.eye.z)*s_scene.camera.forward.z;
+            if(cameraZ<2.0f)cameraZ=2.0f;
+            int radius=b3Ps2ShadowRadius(gap,s_scene.camera.focal/cameraZ);
+            if(radius<minRadius)minRadius=radius;
+            if(radius>maxRadius)maxRadius=radius;
+
+            // Compute a conservative, projected on-screen bbox. The GS
+            // scissor limits both offscreen mask clears and 9/21 sprite
+            // taps to this shadow, avoiding 40 full-screen PCF passes.
+            int x0=10000,y0=10000,x1=-10000,y1=-10000,ok=1;
+            for(int v=0;v<poly.count;++v)
+            {
+                b3ShadowVec3 world=b3ShadowOnReceiver(
+                    poly.vertices[v],&plane,0.045f);
+                int x,y;
+                if(!b3GsProjectScreen(s_scene.camera,toPoint3(world),&x,&y))
+                {
+                    ok=0;break;
+                }
+                if(x<x0)x0=x;
+                if(x>x1)x1=x;
+                if(y<y0)y0=y;
+                if(y>y1)y1=y;
+            }
+            if(!ok)
+            {
+                // Near-plane-clipped silhouettes can extend beyond
+                // original projections; use full-screen safe fallback.
+                x0=0;y0=0;x1=B3_PS2_GS_W-1;y1=B3_PS2_GS_H-1;
+            }
+            b3GsShadowSetPenumbra(radius,x0,y0,x1,y1);
+            b3GsShadowBegin();
+#endif
             b3ShadowVec3 w0=b3ShadowOnReceiver(poly.vertices[0],&plane,0.045f);
             b3GsPoint3 p0=toPoint3(w0);
             for(int t=1;t+1<poly.count;++t)
@@ -442,9 +501,20 @@ static void render_receiver_shadows(int receiver)
                 b3GsTriangle3(s_scene.camera,p0,p1,p2,39,48,56);
                 ++emittedTriangles;
             }
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+            b3GsShadowEnd();
+#endif
         }
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+        if(s_frame%240==0)
+            printf("BOX3D_PCSS_RECEIVER,scene=%d,receiver=%d,casters=%u,radius_min=%d,radius_max=%d\n",
+                   s_scene.kind,receiver,projectedHulls,
+                   projectedHulls?minRadius:0,maxRadius);
+#endif
     }
+#if !defined(BOX3D_GS_PCSS_SHADOWS)
     b3GsShadowEnd();
+#endif
     // Console diagnostics: prove complete silhouettes and both potential
     // receivers were actually processed, independently of screenshots.
     if(s_frame%240==0)
@@ -466,7 +536,11 @@ static void render_official_hud(void)
 #endif
     b3GsOverlayText(14,12,"BOX3D   PS2",239,245,247);
     b3GsOverlayText(14,25,sceneNames[s_scene.kind],189,214,223);
-#if defined(BOX3D_GS_PCF_SHADOWS)
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+    b3GsOverlayText(14,37,"GS PCSS HEIGHT",188,226,240);
+    b3GsOverlayPanel(206,184,106,30);
+    b3GsOverlayText(214,195,"PCSS 3D",250,236,130);
+#elif defined(BOX3D_GS_PCF_SHADOWS)
     b3GsOverlayText(14,37,"GS PCF 3X3",188,226,240);
     // Duplicate the build identity in the lower-right safe area.
     // Test screenshots have sometimes been cropped so that the entire
@@ -531,7 +605,9 @@ int main(void)
 {
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
-#if defined(BOX3D_GS_PCF_SHADOWS)
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+    puts("BOX3D_SHADOW_FILTER,PCSS_INSPIRED_PER_CASTER,source=320x224,radius=1..5,taps=9_or_21");
+#elif defined(BOX3D_GS_PCF_SHADOWS)
     puts("BOX3D_SHADOW_FILTER,PCF_MASK_3X3,source=320x224,radius=1px,weight_sum=96");
     puts("BOX3D_PCF_ACTIVE,mode=3x3_fullres_mask,HUD=top_left+bottom_right");
 #endif
