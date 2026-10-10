@@ -868,3 +868,31 @@ The existing host test now covers byte-exact VUONLY one-box input,
 plus 1/8/400-box command layout and FLUSHA. This change does NOT
 establish that actual XGKICK/GIF rendering is working on PCSX2.
 Test BOX 1 for stability before advancing to 8 and 400.
+
+## 2026-10-11: opt-in Box3D sleep A/B for 400-body VU1 benchmark
+
+A BOX 400 VU1 screenshot measured PHYS 76.6 ms, DRAW 22.7 ms,
+GSWAIT 0.0 ms, USE 596%, approximately 10 FPS. At least 77% of
+the per-frame work is the Box3D physics step. BENCH scenes
+deliberately disable rigid-body sleeping to measure the worst-case
+400-awake-body workload, including after the bodies settle.
+
+Press **CROSS** on BENCH 64/144/256/400 only to toggle
+`b3World_EnableSleeping(world,flag)` without scene recreation
+or changing VU1/PCSS graphics. The initial condition remains
+sleep OFF, `SL0`, precisely to preserve the original stress
+benchmark. Sleep ON is shown as `SL1` in the page HUD and reported
+in `BOX3D_PHYS_SLEEP`. The 60-frame `BOX3D_PERF` log now also
+reports `sleep` and `awake`, so faster FPS is not mistaken for
+equivalent fully awake physics performance. Use CROSS to restore
+the same no-sleep stress load.
+
+Comparison: remain in VU1 BOX 400 at 4 substeps and PCSS. Record
+PHYS/DRAW/GSWAIT/PCSX2 FPS at SL0; tap CROSS once, wait for
+bodies to settle, then record at SL1; tap again to return SL0.
+Optional controls for separate tests: UP toggles S4/S2, and
+SQUARE three times chooses SHADOW OFF. Compare one variable at
+a time. Normal non-BENCH scenes retain their default sleeping.
+
+No performance gain has yet been measured in PCSX2 for this change,
+and this is a workload-mode control rather than a solver optimization.

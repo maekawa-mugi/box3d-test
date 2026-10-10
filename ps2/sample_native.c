@@ -95,6 +95,7 @@ static int s_padReady;
 #if defined(BOX3D_PS2_UNIFIED)
 // User-selectable physics A/B modes; change between completed steps only.
 static int s_simSubsteps=4;
+static int s_stressSleeping=0; // Default: force all bodies awake in BENCH scenes
 static int s_vu0Mode=0;
 static int s_shadowVisualMode=0; // 0=PCSS,1=PCF,2=HARD,3=OFF,4=LEGACY
 static int s_vu1Ready;
@@ -140,12 +141,22 @@ static int pad_nav_poll(void)
     if(!padRead(0,0,&buttons))return 0;
     uint16_t held=(uint16_t)(~buttons.btns)&(PAD_LEFT|PAD_RIGHT
 #if defined(BOX3D_PS2_UNIFIED)
-                                             |PAD_UP|PAD_DOWN|PAD_SQUARE|PAD_TRIANGLE
+                                             |PAD_UP|PAD_DOWN|PAD_SQUARE|PAD_TRIANGLE|PAD_CROSS
 #endif
                                              );
     uint16_t pressed=(uint16_t)(held&~s_padHeld);
     s_padHeld=held;
 #if defined(BOX3D_PS2_UNIFIED)
+    if((pressed&PAD_CROSS) && s_scene.kind>=8)
+    {
+        // Toggle only at frame boundaries; no scene recreation, preserve
+        // VU1 selection, geometry, shadows and 4-step simulation mode.
+        s_stressSleeping=!s_stressSleeping;
+        b3World_EnableSleeping(s_scene.world,s_stressSleeping!=0);
+        printf("BOX3D_PHYS_SLEEP,scene=%d,enabled=%d,awake=%d,substeps=%d\n",
+               s_scene.kind,s_stressSleeping,
+               b3World_GetAwakeBodyCount(s_scene.world),s_simSubsteps);
+    }
     if(pressed&PAD_UP)
     {
         s_simSubsteps=(s_simSubsteps==4)?2:4;
@@ -331,7 +342,7 @@ static void scene_create(int kind)
     // Sustained physics stress should not disappear after the boxes
     // settle and all island sleepers go idle. Force awake for tiers
     // 64/144/256/400 only; regular demos keep natural sleeping.
-    if(kind>=8)wd.enableSleep=false;
+    if(kind>=8)wd.enableSleep=s_stressSleeping!=0;
     s_sumPhysicsTicks=0;
     s_sumBuildTicks=0;
     s_sumGsTicks=0;
@@ -1316,7 +1327,17 @@ static void render_official_hud(void)
         "VU1 BOOT","VU1 VUONLY","VU1 INIT","VU1 VERIFY ARM",
         "VU1 VERIFY"
     };
-    if(vuMode<0)
+    if(s_scene.kind>=8)
+    {
+        // Sleep state is shown independently of S2/S4 and VU1 tier.
+        if(vuMode<0)
+            snprintf(page,sizeof(page),"PAGE %d/%d S%d TEST SL%d",
+                     s_scene.kind+1,SCENE_COUNT,s_simSubsteps,s_stressSleeping);
+        else
+            snprintf(page,sizeof(page),"PAGE %d/%d S%d D%d SL%d",
+                     s_scene.kind+1,SCENE_COUNT,s_simSubsteps,vuMode,s_stressSleeping);
+    }
+    else if(vuMode<0)
         snprintf(page,sizeof(page),"PAGE %d/%d PCSS S%d TEST",
                  s_scene.kind+1,SCENE_COUNT,s_simSubsteps);
     else
@@ -1349,7 +1370,7 @@ static void render_official_hud(void)
     // visible in the EE-only first diagnostic stage, even if a later
     // VIF1 stage deadlocks before the next Present().
     b3GsOverlayPanel(374,14,252,132);
-    b3GsOverlayText(390,26,"TRIANGLE VU1R6",255,233,116);
+    b3GsOverlayText(390,26,"TRIANGLE VU1R7",255,233,116);
     char padInfo[40];
     snprintf(padInfo,sizeof(padInfo),"PRESS %u",
              s_trianglePressCount);
@@ -1653,7 +1674,7 @@ int main(void)
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
 #if defined(BOX3D_PS2_UNIFIED)
-    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off_legacy,TRIANGLE=vu1_ee_ack_path3_init_arm_init_verify_arm_verify_vif_boot_vu_1_8_all");
+    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off_legacy,CROSS=toggle_bench_sleep,TRIANGLE=vu1_ee_ack_path3_init_arm_init_verify_arm_verify_vif_boot_vu_1_8_all");
 #endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
@@ -1684,7 +1705,7 @@ int main(void)
     // until the user enters the explicit INIT diagnostic stage.
     s_vu1Ready=0;
     puts("BOX3D_VU1_STARTUP,lazy=1,ready=0,ee_safe=1");
-    puts("BOX3D_VU1_BUILD,revision=vu1r6_normal_dma_path1");
+    puts("BOX3D_VU1_BUILD,revision=vu1r7_bench_sleep_probe");
     puts("BOX3D_VU1_SAFE_DEFAULT,ee_geometry=1,triangle=ack_path3_init_arm_init_verify_arm_verify_vif_boot");
 #endif
 #if defined(BOX3D_PS2_PAD_NAV)
@@ -1766,7 +1787,7 @@ int main(void)
             if(s_perfSamples>=60)
             {
                 double divisor=294912.0*(double)s_perfSamples;
-                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_shadow_ms=%.3f,avg_box_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u,substeps=%d,vu0=%d,shadow_mode=%d,vu1_enabled=%d,vu1_boxes=%d\n",
+                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_shadow_ms=%.3f,avg_box_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u,substeps=%d,vu0=%d,shadow_mode=%d,vu1_enabled=%d,vu1_boxes=%d,sleep=%d,awake=%d\n",
                        s_scene.kind,(unsigned long)s_frame,s_scene.count-1,
                        (double)s_sumPhysicsTicks/divisor,
                        (double)s_sumBuildTicks/divisor,
@@ -1779,7 +1800,9 @@ int main(void)
                          (4915200.0*(double)s_perfSamples/100.0),
                        (double)s_lastVsyncMs,b3GsGetLastGifQwords(),
                        s_simSubsteps,s_vu0Mode,s_shadowVisualMode,
-                       s_vu1Ready&&s_vu1Budget>0,s_lastVu1Boxes);
+                        s_vu1Ready&&s_vu1Budget>0,s_lastVu1Boxes,
+                       b3World_IsSleepingEnabled(s_scene.world),
+                       b3World_GetAwakeBodyCount(s_scene.world));
                 b3Counters counters=b3World_GetCounters(s_scene.world);
                 printf("BOX3D_PHYS_PROFILE,scene=%d,frame=%lu,substeps=%d,vu0=%d,pairs_ms=%.3f,collide_ms=%.3f,solve_ms=%.3f,constraints_ms=%.3f,contacts=%d,awake=%d\n",
                        s_scene.kind,(unsigned long)s_frame,
