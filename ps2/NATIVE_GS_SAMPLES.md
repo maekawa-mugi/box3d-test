@@ -113,3 +113,65 @@ and approximately the original 40° yaw / 15° pitch / 50m orbit camera
 looking at Y=20. The previously validated wireframe/filled builds
 still use 12 boxes and their smaller scene camera. This changes
 physics/rendering load; 60fps must be re-evaluated in the new ELF.
+
+## Diagnosing shadow fragments on the inclined-plane screenshot
+
+Two user-provided PCS​​X2 screenshots confirmed native GS filled
+triangles and the later official-inspired daylight edition, but the
+official-inspired shadow quads appeared as small broken fragments.
+The previous `render_shadows` had *two structural problems*:
+
+1. It projected **only the four bottom-face corners** of each rotated
+   box onto `y=0`, so the shadow silhouette was incomplete. The
+   shadow of a hovering tilted platform in particular cannot be modeled
+   by its bottom face alone.
+2. It supported **only the horizontal floor**, and drew shadow quads
+   before the opaque geometry. Shadows on the tilted platform were
+   impossible, and depth interactions were fragile.
+   Triangles crossing the view near-plane were rejected in full,
+   producing missing sections.
+
+The separate `ps2/box3d_ps2_samples_shadows.elf` fixes this without
+changing the older ELFs:
+- `shadow_project.[ch]` projects all eight box corners in the direction
+  of the sun, computes a monotone-chain **convex silhouette hull**, and
+  clips it to the finite receiver plane with Sutherland-Hodgman.
+- Receivers are the *actual Box3D ground top face* and, in the incline
+  scene, the *upper face of the rotated platform* using its quaternion.
+  Each resulting polygon is one triangle fan, preventing within-box
+  alpha overdraw. Ground shadow bounds are matched to the 48m checker.
+- GS submission occurs **after opaque geometry**, using the already
+  populated native GS ZBUF32 and depth test to apply shadows only over
+  visible receivers. `ZMSK=1` avoids damaging scene depth.
+  A 0.045m normal offset prevents Z-fighting; GS alpha blending makes
+  the silhouettes translucent.
+- GS triangles are clipped to the camera near plane before projection,
+  instead of dropping an entire triangle because one point was too near.
+- `BOX3D_SHADOW_RECEIVERS` logs the number of receivers, generated
+  shadow hulls and emitted triangles periodically.
+
+Host-only geometry regression (does not need PS2DEV):
+```sh
+cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic \
+  ps2/shadow_project.c ps2/shadow_project_test.c -lm \
+  -o /tmp/box3d_ps2_shadow_test
+/tmp/box3d_ps2_shadow_test
+```
+
+**This is still directional projected geometry, not a true stencil
+shadow-volume implementation or render-to-texture depth shadow map.**
+The included PS2-era articles describe real alternatives: the "Shadow
+of the Colossus" graphics lecture describes VU1-generated simplified
+shadow volumes and stencil-style self-shadowing; the "Onimusha 3"
+engine lecture describes low-resolution projected shadow textures
+smoothed with GS bilinear filtering plus less costly substitutes.
+GS does not expose a direct PC-style multibit stencil buffer or a
+programmable shadow depth comparison. Achieving arbitrary receiver
+self-shadowing requires a distinct shadow-mask/volume pass or another
+multipass treatment of GS framebuffer-alpha and depth behavior.
+
+The projected-shadow ELF has not yet been crosscompiled or executed
+under PCSX2, unlike the earlier daylight GS visuals. Verify that
+`hulls` and `triangles` are nonzero and that the large inclined
+platform's full shadow now appears on the floor. 60fps is **not**
+assumed for this more complex edition.

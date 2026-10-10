@@ -402,6 +402,8 @@ static void cornersForBody(const SceneBody* body,b3ShadowVec3 out[8])
 }
 static void render_receiver_shadows(void)
 {
+    unsigned emittedTriangles=0;
+    unsigned projectedHulls=0;
     // Same directional-light orientation as the face lighting.
     const b3ShadowVec3 direction={-0.44f,-0.82f,-0.36f};
     const int receiverCount=s_scene.kind==1?2:1;
@@ -425,6 +427,7 @@ static void render_receiver_shadows(void)
             // A single convex silhouette fan, rather than overlapping
             // top/bottom-face quads. This prevents alpha over-darkening
             // within one box's shadow and missing rotated silhouettes.
+            ++projectedHulls;
             b3ShadowVec3 w0=b3ShadowOnReceiver(poly.vertices[0],&plane,0.045f);
             b3GsPoint3 p0=toPoint3(w0);
             for(int t=1;t+1<poly.count;++t)
@@ -434,10 +437,16 @@ static void render_receiver_shadows(void)
                 b3GsPoint3 p2=toPoint3(
                     b3ShadowOnReceiver(poly.vertices[t+1],&plane,0.045f));
                 b3GsTriangle3(s_scene.camera,p0,p1,p2,39,48,56);
+                ++emittedTriangles;
             }
         }
     }
     b3GsShadowEnd();
+    // Console diagnostics: prove complete silhouettes and both potential
+    // receivers were actually processed, independently of screenshots.
+    if(s_frame%240==0)
+        printf("BOX3D_SHADOW_RECEIVERS,scene=%d,receivers=%d,hulls=%u,triangles=%u\n",
+               s_scene.kind,receiverCount,projectedHulls,emittedTriangles);
 }
 #endif
 

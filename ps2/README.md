@@ -428,3 +428,16 @@ and approximately the original 40° yaw / 15° pitch / 50m orbit camera
 looking at Y=20. The previously validated wireframe/filled builds
 still use 12 boxes and their smaller scene camera. This changes
 physics/rendering load; 60fps must be re-evaluated in the new ELF.
+
+## Directional box silhouette shadow repair
+
+A fourth visual ELF, `ps2/box3d_ps2_samples_shadows.elf`, keeps the
+official-style materials and physics but replaces the broken projected
+bottom-face shadow quads with full convex silhouettes of all eight box
+corners, clipped against both the floor and inclined platform receivers.
+Opaque depth is drawn first, then direct-GS alpha-blended shadow geometry
+uses ZBUF32 with Z writes disabled. Camera-near-plane clipping is added
+to this variant. See `ps2/NATIVE_GS_SAMPLES.md` for the PS2-era
+historical references, exact method, test instructions and known
+limits. This is **not yet** a real stencil shadow volume or a depth map.
+The existing wireframe, solid, and official-style versions are kept.
