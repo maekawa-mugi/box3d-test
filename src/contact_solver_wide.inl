@@ -6,6 +6,9 @@
 #include "platform.h"
 #include "simd.h"
 #include "simd_wide.h"
+#if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
+#include "../ps2/vu0_sweep.h"
+#endif
 
 // Wide vec2
 typedef struct B3_WIDE( b3Vec2 )
@@ -1106,9 +1109,216 @@ B3_FORCE_INLINE void b3WarmStartContactsW( b3SolverBlock block, b3StepContext* c
 }
 
 // Solve the non-penetration constraints with the soft bias. No friction and no restitution.
+
+#if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
+// VU0 owns the ordered normal solve for up to four manifold points.
+// Only the six lower-triangle cross-point couplings are needed.
+// A point's delta changes later relative speeds by J_q M^-1 J_p^T * delta.
+// Cache these coefficients once per world step; anchors, normal and
+// inverse inertia are unchanged through the S4 solver substeps.
+typedef struct b3Vu0SweepCouplingCache
+{
+    const b3ContactConstraintWide* key;
+    unsigned epoch;
+    b3FloatW influence[6];
+} b3Vu0SweepCouplingCache;
+
+B3_FORCE_INLINE void b3GetSweepCouplings(
+    const b3ContactConstraintWide* c,const b3ContactManifoldWide* cm,
+    b3FloatW result[6])
+{
+    static b3Vu0SweepCouplingCache cache[4096];
+    unsigned slot=(unsigned)(((uintptr_t)c>>5u)&4095u);
+    unsigned epoch=b3Vu0SweepStepEpoch();
+    b3Vu0SweepCouplingCache* entry=cache+slot;
+    if(entry->key==c && entry->epoch==epoch)
+    {
+        for(int i=0;i<6;++i)result[i]=entry->influence[i];
+        return;
+    }
+    b3Vec3W armA[4],armB[4],responseA[4],responseB[4];
+    b3FloatW zero=b3ZeroW();
+    for(int p=0;p<cm->pointCount;++p)
+    {
+        armA[p]=b3CrossW(cm->points[p].anchorAs,cm->normal);
+        armB[p]=b3CrossW(cm->points[p].anchorBs,cm->normal);
+        responseA[p]=b3MulMVW(c->invIA,armA[p]);
+        responseB[p]=b3MulMVW(c->invIB,armB[p]);
+    }
+    b3FloatW base=b3MulW(b3AddW(c->invMassA,c->invMassB),
+                          b3DotW(cm->normal,cm->normal));
+    const int earlier[6]={0,0,0,1,1,2};
+    const int later[6]={1,2,3,2,3,3};
+    for(int k=0;k<6;++k)
+    {
+        int p=earlier[k],q=later[k];
+        if(q>=cm->pointCount)
+        {
+            result[k]=zero;
+            continue;
+        }
+        result[k]=b3AddW(base,b3AddW(
+            b3DotW(armA[q],responseA[p]),
+            b3DotW(armB[q],responseB[p])));
+    }
+    entry->key=c;
+    entry->epoch=epoch;
+    for(int k=0;k<6;++k)entry->influence[k]=result[k];
+}
+
+// Native PS2 uses one EE physics worker. The constraints of a graph
+// color have disjoint dynamic bodies, so eight SIMD4 groups can run
+// independently in the same VCALLMS. There is one launch per entire
+// four-point normal sweep, not one launch per point.
+B3_FORCE_INLINE void b3SolveSweptNormalsW4(
+    b3SolverBlock block,b3StepContext* context,void* base,bool push)
+{
+    b3BodyState* states=context->states;
+    const b3FloatW zero=b3ZeroW();
+    const b3FloatW one=b3SplatW(1.0f);
+    const b3FloatW inv_h=b3SplatW(context->inv_h);
+    const b3FloatW contactSpeed=b3SplatW(-context->world->contactSpeed);
+    const b3FloatW dynamicBias=b3SplatW(
+        context->contactSoftness.massScale*context->contactSoftness.biasRate);
+    const b3FloatW dynamicMass=b3SplatW(context->contactSoftness.massScale);
+    const b3FloatW dynamicDecay=b3SplatW(context->contactSoftness.impulseScale);
+    const b3FloatW staticBias=b3SplatW(
+        context->staticSoftness.massScale*context->staticSoftness.biasRate);
+    const b3FloatW staticMass=b3SplatW(context->staticSoftness.massScale);
+    const b3FloatW staticDecay=b3SplatW(context->staticSoftness.impulseScale);
+    static struct
+    {
+        b3ContactConstraintWide* c[B3_VU0_SWEEP_GROUPS];
+        b3ContactManifoldWide* cm[B3_VU0_SWEEP_GROUPS];
+        b3BodyStateW a[B3_VU0_SWEEP_GROUPS],b[B3_VU0_SWEEP_GROUPS];
+        b3Vu0SweepRecord r[B3_VU0_SWEEP_GROUPS];
+    } scratch;
+    for(int start=0;start<block.count;start+=B3_VU0_SWEEP_GROUPS)
+    {
+        unsigned groups=(unsigned)(block.count-start);
+        if(groups>B3_VU0_SWEEP_GROUPS)groups=B3_VU0_SWEEP_GROUPS;
+        b3ContactConstraintWide* c=b3GetConstraintW(
+            base,NULL,block.startIndex+start,1);
+        for(unsigned g=0;g<groups;++g)
+        {
+            scratch.c[g]=c;
+            b3ContactManifoldWide* cm=b3GetManifoldsW(c);
+            scratch.cm[g]=cm;
+            scratch.a[g]=b3GatherBodies(states,c->indexA);
+            scratch.b[g]=b3GatherBodies(states,c->indexB);
+            b3BodyStateW* bA=&scratch.a[g],*bB=&scratch.b[g];
+            b3Vu0SweepRecord* rec=&scratch.r[g];
+            // All fields, including unused point slots, are initialized:
+            // an absent manifold point has old=mass=bias=speed=0.
+            memset(rec,0,sizeof(*rec));
+            b3FloatW coupling[6];
+            b3GetSweepCouplings(c,cm,coupling);
+            for(int k=0;k<6;++k)
+                b3StoreW4(rec->coupling[k],coupling[k]);
+            b3Vec3W dp=b3SubVW(bB->dp,bA->dp);
+            b3FloatW separation=b3DotW(cm->normal,dp);
+            b3Vec3W normalA=b3InvRotateVectorW(bA->dq,cm->normal);
+            b3Vec3W normalB=b3InvRotateVectorW(bB->dq,cm->normal);
+            b3FloatW biasRate=zero,massScale=one,impulseScale=zero;
+            if(push)
+            {
+                b3FloatW staticMask=b3SoftMaskW(c->indexA,c->indexB);
+                biasRate=b3BlendW(dynamicBias,staticBias,staticMask);
+                massScale=b3BlendW(dynamicMass,staticMass,staticMask);
+                impulseScale=b3BlendW(dynamicDecay,staticDecay,staticMask);
+            }
+            for(int point=0;point<cm->pointCount;++point)
+            {
+                b3ContactConstraintPointWide* cp=cm->points+point;
+                b3Vec3W rA=cp->anchorAs,rB=cp->anchorBs;
+                b3FloatW dotB,dotA;
+                b3Dot2W(normalB,rB,normalA,rA,&dotB,&dotA);
+                b3FloatW s=b3AddW(
+                    b3AddW(separation,b3SubW(dotB,dotA)),cp->baseSeparations);
+                b3FloatW bias;
+                b3FloatW effectiveMass=cp->normalMasses;
+                b3FloatW oldDecay=zero;
+                if(push)
+                {
+                    b3FloatW separated=b3GreaterThanW(s,zero);
+                    b3FloatW spec=b3MulW(s,inv_h);
+                    b3FloatW overlap=b3MaxW(b3MulW(biasRate,s),contactSpeed);
+                    bias=b3BlendW(overlap,spec,separated);
+                    effectiveMass=b3MulW(effectiveMass,
+                        b3BlendW(massScale,one,separated));
+                    oldDecay=b3BlendW(impulseScale,zero,separated);
+                }
+                else
+                    bias=b3MaxW(zero,b3MulW(s,inv_h));
+
+                b3Vec3W vrA=b3AddVW(bA->v,b3CrossW(bA->w,rA));
+                b3Vec3W vrB=b3AddVW(bB->v,b3CrossW(bB->w,rB));
+                b3FloatW vn=b3DotW(b3SubVW(vrB,vrA),cm->normal);
+                // EE packs a single effective coefficient and additive
+                // term; the four dependent GS updates all run on VU0.
+                b3FloatW offset=b3AddW(
+                    b3MulW(cp->normalMasses,bias),
+                    b3MulW(oldDecay,cp->normalImpulses));
+                b3StoreW4(rec->old[point],cp->normalImpulses);
+                b3StoreW4(rec->mass[point],effectiveMass);
+                b3StoreW4(rec->speed[point],vn);
+                b3StoreW4(rec->bias[point],offset);
+            }
+            c=b3NextConstraintW(c,1);
+        }
+
+        int result=b3Vu0SweepSolve(scratch.r,groups);
+        if(result<0)b3Ps2SetVU0Enabled(0);
+        if(result!=1)
+            for(unsigned g=0;g<groups;++g)
+                b3Vu0SweepReference(&scratch.r[g]);
+        // Commit only complete, checked sweeps. All normal velocity
+        // updates are accumulated and applied once per manifold.
+        for(unsigned g=0;g<groups;++g)
+        {
+            b3ContactConstraintWide* cur=scratch.c[g];
+            b3ContactManifoldWide* cm=scratch.cm[g];
+            b3BodyStateW* bA=&scratch.a[g],*bB=&scratch.b[g];
+            const b3Vu0SweepRecord* r=&scratch.r[g];
+            b3FloatW totalDelta=zero;
+            b3Vec3W angularA={zero,zero,zero};
+            b3Vec3W angularB={zero,zero,zero};
+            for(int point=0;point<cm->pointCount;++point)
+            {
+                b3ContactConstraintPointWide* cp=cm->points+point;
+                b3FloatW next=b3LoadW4(r->next[point]);
+                b3FloatW delta=b3LoadW4(r->delta[point]);
+                cp->normalImpulses=next;
+                if(!push)
+                    cp->totalNormalImpulses=b3AddW(cp->totalNormalImpulses,next);
+                totalDelta=b3AddW(totalDelta,delta);
+                angularA=b3AddVW(angularA,b3MulSVW(delta,
+                    b3CrossW(cp->anchorAs,cm->normal)));
+                angularB=b3AddVW(angularB,b3MulSVW(delta,
+                    b3CrossW(cp->anchorBs,cm->normal)));
+            }
+            b3Vec3W linear=b3MulSVW(totalDelta,cm->normal);
+            bA->w=b3MulSubMVW(bA->w,cur->invIA,angularA);
+            bA->v=b3MulSubSVW(bA->v,cur->invMassA,linear);
+            bB->w=b3MulAddMVW(bB->w,cur->invIB,angularB);
+            bB->v=b3MulAddSVW(bB->v,cur->invMassB,linear);
+            b3ScatterBodies(states,cur->indexA,bA);
+            b3ScatterBodies(states,cur->indexB,bB);
+        }
+    }
+}
+#endif
+
 B3_FORCE_INLINE void b3PushContactsW( b3SolverBlock block, b3StepContext* context, void* base, const int* manifoldStarts,
 									  int fixedManifoldCount )
 {
+#if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
+    if(fixedManifoldCount==1 && b3Ps2GetVU0Enabled()==6 && b3Vu0SweepIsReady())
+    {
+        b3SolveSweptNormalsW4(block,context,base,true);
+        return;
+    }
+#endif
 	b3BodyState* states = context->states;
 	b3FloatW inv_h = b3SplatW( context->inv_h );
 	b3FloatW contactSpeed = b3SplatW( -context->world->contactSpeed );
@@ -1379,9 +1589,13 @@ B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* conte
 #if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
     // The color guarantees independent bodies; no batching across
     // graph colors or across points that depend on previous impulses.
-    const bool useBatchedNormals = fixedManifoldCount == 1 && block.count >= 2 &&
+    const bool useSweptNormals = fixedManifoldCount == 1 &&
+        b3Ps2GetVU0Enabled() == 6 && b3Vu0SweepIsReady();
+    const bool useBatchedNormals = !useSweptNormals &&
+        fixedManifoldCount == 1 && block.count >= 2 &&
         b3Ps2GetVU0Enabled() == 6 && b3Vu0MicroIsReady();
-    if ( useBatchedNormals ) b3SolveBatchedNormalsW4( block, context, base );
+    if(useSweptNormals)b3SolveSweptNormalsW4(block,context,base,false);
+    else if(useBatchedNormals)b3SolveBatchedNormalsW4(block,context,base);
 #endif
 	b3ContactConstraintWide* c = b3GetConstraintW( base, manifoldStarts, block.startIndex, fixedManifoldCount );
 	for ( int i = 0; i < block.count; ++i )
@@ -1401,7 +1615,7 @@ B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* conte
 			b3FloatW totalTwistLimit = zeroW;
 
 #if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
-            if ( useBatchedNormals )
+            if ( useBatchedNormals || useSweptNormals )
             {
                 // Normal impulses and velocities were already committed
                 // in the graph-colored batch. Reconstruct the manifold

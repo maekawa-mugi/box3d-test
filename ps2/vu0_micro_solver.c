@@ -2,6 +2,7 @@
 // VU0 micro-mode contact probe. The existing Box3D solver stays unchanged
 // until PCSX2 verifies this actual VCALLMS path and its numeric outputs.
 #include "vu0_micro_solver.h"
+#include "vu0_sweep.h"
 #include "vu0_mmio_transfer.h"
 #include "../src/ps2_vu0.h"
 
@@ -39,6 +40,7 @@ void b3Vu0MicroBeginPhysicsStep(void)
     s_stepCalls=0;
     s_batchCalls=0;
     s_completedVu0IsIdle=0;
+    b3Vu0SweepBeginPhysicsStep();
 }
 _Static_assert(sizeof(b3Ps2VU0NormalSolveData)==sizeof(b3Vu0MicroRecord),
                "Box3D SIMD4 normal impulse ABI must match VU0 micro record");
@@ -56,7 +58,8 @@ static int b3Vu0WaitIdle(void)
     return 0;
 }
 
-const char* b3Vu0MicroStatus(void){return s_status;}
+const char* b3Vu0MicroStatus(void)
+{return b3Vu0SweepResident()?b3Vu0SweepStatus():s_status;}
 
 int b3Vu0MicroUpload(void)
 {
@@ -157,9 +160,12 @@ static int b3Vu0MicroRunBlock(b3Vu0MicroBlock* block,unsigned groups)
     return b3Vu0MicroRunRecords(block->record,block->record,groups);
 }
 
-int b3Vu0MicroIsReady(void){return s_verified;}
-unsigned b3Vu0MicroGetLiveCalls(void){return s_liveCalls;}
-unsigned b3Vu0MicroGetLiveGroups(void){return s_liveGroups;}
+int b3Vu0MicroIsReady(void)
+{return b3Vu0SweepResident()?b3Vu0SweepIsReady():s_verified;}
+unsigned b3Vu0MicroGetLiveCalls(void)
+{return s_liveCalls+b3Vu0SweepGetLiveCalls();}
+unsigned b3Vu0MicroGetLiveGroups(void)
+{return s_liveGroups+b3Vu0SweepGetLiveGroups();}
 
 // Each unbatched VCALLMS is a synchronous EE/VU0 round-trip. In large
 // awake scenes bound the number per physics step; use scalar thereafter
@@ -167,6 +173,7 @@ unsigned b3Vu0MicroGetLiveGroups(void){return s_liveGroups;}
 // Return 1 on success, 0 for a safe budget fallback, -1 on failure.
 int b3Vu0MicroNormalSolve4(b3Ps2VU0NormalSolveData* record)
 {
+    if(b3Vu0SweepResident())return 0;
     if(!record || !s_verified)return -1;
     if(s_stepCalls>=B3_VU0_MICRO_MAX_LIVE_PER_STEP)return 0;
     if(!b3Vu0MicroRunRecords(record,s_microData.record,1u))return -1;
@@ -228,6 +235,7 @@ int b3Vu0MicroNormalSolve4(b3Ps2VU0NormalSolveData* record)
 int b3Vu0MicroNormalSolveBatch(b3Ps2VU0NormalSolveData* records,
                                unsigned groups)
 {
+    if(b3Vu0SweepResident())return 0;
     if(!records || !s_verified || groups==0u ||
        groups>B3_VU0_MICRO_GROUPS)return -1;
     if(s_batchCalls>=B3_VU0_MICRO_MAX_BATCHES_PER_STEP)return 0;

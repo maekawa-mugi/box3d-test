@@ -14,6 +14,7 @@
 #include "../src/ps2_vu0.h"
 #include "vu1_boxes.h"
 #include "vu0_micro_solver.h"
+#include "vu0_sweep.h"
 #endif
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
 #include "ee_clock.h"
@@ -1646,6 +1647,8 @@ int main(void)
     int vu0Uploaded=b3Vu0MicroUpload();
     int vu0Verified=vu0Uploaded && b3Vu0MicroVerify();
     s_vu0MicroPassed=vu0Verified && b3Vu0MicroDifferentialTest();
+    if(s_vu0MicroPassed)
+        b3Vu0SweepPromote(); // automatic self-test with legacy kernel restoration on failure
     b3Ps2SetVU0Enabled(0);
     s_vu0Mode=0;
     printf("BOX3D_VU0_STARTUP,micro_ready=%d,status=%s\n",

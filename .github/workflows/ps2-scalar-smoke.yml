@@ -48,4 +48,7 @@ jobs:
         run: |
           cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic ps2/vu0_micro_solver_test.c -lm -o /tmp/b3_vu0_micro_test
           /tmp/b3_vu0_micro_test
+          cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic ps2/vu0_sweep_test.c -lm -o /tmp/b3_vu0_sweep_test
+          /tmp/b3_vu0_sweep_test
           cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic -c ps2/vu0_micro_solver.c -o /tmp/b3_vu0_micro_host_stub.o
+          cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic -c ps2/vu0_sweep_runtime.c -o /tmp/b3_vu0_sweep_host_stub.o

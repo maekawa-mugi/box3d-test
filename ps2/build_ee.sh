@@ -57,6 +57,8 @@ LIB="$BUILD/src/libbox3d.a"
 # contact-normal batch per VCALLMS. It is NOT executed automatically.
 "$DVP" "$ROOT/ps2/vu0_micro_solver.vsm" -o "$BUILD/vu0_contact_micro.o"
 [ -s "$BUILD/vu0_contact_micro.o" ] || die "VU0 microcode object was not produced"
+"$DVP" "$ROOT/ps2/vu0_sweep.vsm" -o "$BUILD/vu0_sweep_micro.o"
+[ -s "$BUILD/vu0_sweep_micro.o" ] || die "VU0 sweep microcode object was not produced"
 
 "$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
     -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 -DBOX3D_PS2_UNIFIED=1 \
@@ -65,7 +67,7 @@ LIB="$BUILD/src/libbox3d.a"
     -I"$PS2SDK/ee/rpc/pad/include" \
     "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
     "$ROOT/ps2/vu1_boxes.c" "$BUILD/vu1_boxes_micro.o" \
-    "$ROOT/ps2/vu0_micro_solver.c" "$BUILD/vu0_contact_micro.o" \
+    "$ROOT/ps2/vu0_micro_solver.c" "$ROOT/ps2/vu0_sweep_runtime.c" "$BUILD/vu0_sweep_micro.o" "$BUILD/vu0_contact_micro.o" \
     "$ROOT/ps2/shadow_project.c" "$ROOT/shared/human.c" \
     "$ROOT/shared/utils.c" "$LIB" \
     -L"$PS2SDK/ee/lib" -lpacket2 -lgraph -ldma -lpad -lm -lkernel \
@@ -79,7 +81,7 @@ for symbol in main b3World_Step b3GsPresent b3GsShadowSetPenumbra b3ShadowProjec
     "$NM" --defined-only "$OUT" | grep -Eq " [Tt] ${symbol}$" ||
         die "Unified ELF missing symbol: $symbol"
 done
-for micro_symbol in B3Vu1Boxes_CodeStart B3Vu1Boxes_RunStart B3Vu0Contacts_CodeStart B3Vu0Contacts_CodeEnd; do
+for micro_symbol in B3Vu1Boxes_CodeStart B3Vu1Boxes_RunStart B3Vu0Contacts_CodeStart B3Vu0Contacts_CodeEnd B3Vu0Sweep_CodeStart B3Vu0Sweep_CodeEnd; do
     "$NM" --defined-only "$OUT" | grep -Eq " [TtDd] ${micro_symbol}$" ||
         die "Unified ELF missing VU1 microprogram symbol: $micro_symbol"
 done

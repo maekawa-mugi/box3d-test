@@ -1248,3 +1248,24 @@ normally. Each VCALLMS continues to wait at completion and falls back
 to EE on error. This eliminates only *redundant preflight polls*; the
 main launch-count reduction comes from packing 16 SIMD4 constraints
 into each graph-colored task rather than four.
+
+## Coupled VU0 normal-point sweep
+
+Mode 6 automatically attempts a second, four-point VU0 microprogram after
+the proven 64-lane normal test. The new program must pass code readback,
+one-group and eight-group numerical checks, and a next-record sentinel.
+If promotion fails, startup restores the previous verified microprogram.
+
+For convex colored contacts, both push and relax normal solves can then
+perform four ordered Gauss-Seidel contact points per micro launch.
+Six off-diagonal normal Jacobian coupling values are cached once per
+world step so a normal impulse on an earlier contact point updates the
+later point's relative velocity within VU0, without returning to EE.
+Eight SIMD4 records fit in one launch: 241 out of 256 VU0 DMEM QWs.
+The EE applies the resulting total linear/angular impulse once per
+manifold. The old normal kernel remains as fallback.
+
+This does not yet offload collision detection, contact preparation,
+tangent/twist/rolling friction, or final velocity scatter. Build success,
+PCSX2 numerical behavior, physical stability, and 60 FPS remain
+unverified. The VU1/GIF synchronization path is unchanged.
