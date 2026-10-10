@@ -2,6 +2,9 @@
 // PS2 native GS wireframe backend using packed GIF A+D and channel-2 DMA.
 // PS2SDK graph manages the CRT/read circuit only. No draw, no gsKit.
 #include "gs_native.h"
+#if defined(BOX3D_PS2_UNIFIED)
+#include "ee_clock.h"
+#endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #include "shadow_penumbra.h"
 #endif
@@ -27,8 +30,12 @@
 #include <stdio.h>
 
 typedef struct B3GsQword { uint64_t data, reg; } B3GsQword;
-#if defined(BOX3D_GS_RECEIVER_SHADOWS)
-// Large packets also hold GPU-only multi-stage Kawase texture passes.
+#if defined(BOX3D_PS2_UNIFIED)
+// Max GIF PACKED NLOOP is 32767: reserve one TAG + at most 32758 A+D
+// entries. Stress presets emit many real Box3D hull triangles.
+#define B3_GS_QWORDS 32760
+#elif defined(BOX3D_GS_RECEIVER_SHADOWS)
+// Legacy packet limit (no longer built).
 #define B3_GS_QWORDS 16384
 #elif defined(BOX3D_GS_OFFICIAL)
 #define B3_GS_QWORDS 8192
@@ -38,6 +45,9 @@ typedef struct B3GsQword { uint64_t data, reg; } B3GsQword;
 static _Alignas(64) B3GsQword s_packet[B3_GS_QWORDS];
 static unsigned s_used;
 static unsigned s_lastGifQwords;
+#if defined(BOX3D_PS2_UNIFIED)
+static uint32_t s_lastGsWaitTicks,s_lastVsyncWaitTicks;
+#endif
 static int s_framebuffer[2];
 static int s_back = 1;
 #if defined(BOX3D_GS_SOLID)
@@ -687,6 +697,27 @@ static void b3GsShadowCompositeTap(int width,int height,
     b3GsAD(GS_SET_ALPHA(2,0,2,1,fix),GS_REG_ALPHA_1);
     b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,width,height,x,y);
 }
+#if defined(BOX3D_PS2_UNIFIED)
+// A sub-texel bilinear tap: XY is shifted by whole pixels, while UV is
+// shifted by +/-0.5 texel TOWARD the caster for every off-center tap.
+// This samples between two pixel rows/columns even at 1:1 scale,
+// instead of repeatedly reading individual jagged binary-mask pixels.
+// UV stays nonnegative; scissor clips destination beyond the receiver.
+static void b3GsShadowCompositeSmoothTap(int dx,int dy,
+                                         int ix,int iy,int fix)
+{
+    const int w=B3_PS2_GS_W,h=B3_PS2_GS_H;
+    int ux=8+(ix<0?8:ix>0?-8:0);
+    int uy=8+(iy<0?8:iy>0?-8:0);
+    b3GsAD(GS_SET_ALPHA(2,0,2,1,fix),GS_REG_ALPHA_1);
+    b3GsAD(GS_SET_PRIM(6,0,1,0,1,0,1,0,0),GS_REG_PRIM);
+    b3GsAD(GS_SET_UV(ux,uy),GS_REG_UV);
+    b3GsAD(b3GsXYZ(dx,dy),GS_REG_XYZ2);
+    b3GsAD(GS_SET_UV((w<<4)+ux,(h<<4)+uy),GS_REG_UV);
+    b3GsAD(b3GsXYZ(w+dx,h+dy),GS_REG_XYZ2);
+}
+#endif
+
 static void b3GsShadowCompositeFour(int width,int height,int shift,int fix)
 {
     b3GsAD(GS_SET_ALPHA(2,0,2,1,fix),GS_REG_ALPHA_1);
@@ -789,6 +820,11 @@ void b3GsShadowEnd(void)
     b3GsPcssScissor();
     if(s_pcssRadius==1)
     {
+#if defined(BOX3D_GS_PCF_4TAP)
+        // Near-contact PCSS IS PCF: four half-texel GS bilinear samples
+        // realize the 3x3 separable tent (FIX=24 per tap, total 96).
+        b3GsPcf4Tap(B3_PS2_GS_W,B3_PS2_GS_H);
+#else
         for(int iy=-1;iy<=1;++iy)
         for(int ix=-1;ix<=1;++ix)
         {
@@ -797,6 +833,7 @@ void b3GsShadowEnd(void)
             b3GsShadowCompositeTap(B3_PS2_GS_W,B3_PS2_GS_H,
                                    ix,iy,fix);
         }
+#endif
     }
     else
     {
@@ -815,8 +852,12 @@ void b3GsShadowEnd(void)
                 dy=b3Ps2ShadowCompressMinor(dy);
             else
                 dx=b3Ps2ShadowCompressMinor(dx);
+#if defined(BOX3D_PS2_UNIFIED)
+            b3GsShadowCompositeSmoothTap(dx,dy,ix,iy,fix);
+#else
             b3GsShadowCompositeTap(B3_PS2_GS_W,B3_PS2_GS_H,
                                    dx,dy,fix);
+#endif
         }
     }
     // Next receiver, another caster, and the HUD all need full scissor.
@@ -1104,6 +1145,10 @@ unsigned b3GsGetLastGifQwords(void)
 {
     return s_lastGifQwords;
 }
+#if defined(BOX3D_PS2_UNIFIED)
+uint32_t b3GsGetLastGsWaitTicks(void) {return s_lastGsWaitTicks;}
+uint32_t b3GsGetLastVsyncWaitTicks(void) {return s_lastVsyncWaitTicks;}
+#endif
 void b3GsPresent(void)
 {
     // One GIF PACKED tag (NREG=1, A+D), followed by raw 128b A+D pairs.
@@ -1117,11 +1162,22 @@ void b3GsPresent(void)
 
     // Clear GS FINISH (W1C), DMA sends cache-flushed packet and wait for
     // GS completion, not just DMA drain. Never write displayed framebuffer.
+#if defined(BOX3D_PS2_UNIFIED)
+    uint32_t gsBegin=b3Ps2ReadCpuCycles();
+#endif
     *GS_REG_CSR = (uint64_t)2;
     dma_channel_send_normal(DMA_CHANNEL_GIF, s_packet, s_used, 0, 0);
     dma_channel_wait(DMA_CHANNEL_GIF, 0);
     while (((*GS_REG_CSR) & (uint64_t)2) == 0) {}
+#if defined(BOX3D_PS2_UNIFIED)
+    uint32_t gsComplete=b3Ps2ReadCpuCycles();
+    s_lastGsWaitTicks=b3Ps2DeltaCpuCycles(gsBegin,gsComplete);
+#endif
     graph_wait_vsync();
+#if defined(BOX3D_PS2_UNIFIED)
+    s_lastVsyncWaitTicks=
+        b3Ps2DeltaCpuCycles(gsComplete,b3Ps2ReadCpuCycles());
+#endif
     graph_set_framebuffer(0,s_framebuffer[s_back],B3_PS2_GS_W,B3_GS_COLOR_PSM,0,0);
     graph_set_framebuffer(1,s_framebuffer[s_back],B3_PS2_GS_W,B3_GS_COLOR_PSM,0,0);
     s_back ^= 1;

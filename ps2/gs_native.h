@@ -71,6 +71,12 @@ void b3GsOverlayText(int x,int y,const char* text,uint8_t r,uint8_t g,uint8_t b)
 void b3GsPresent(void);
 // Actual GIF DMA packet length from the most recent completed frame.
 unsigned b3GsGetLastGifQwords(void);
+#if defined(BOX3D_PS2_UNIFIED)
+// Separately instrument time spent waiting for the GIF/GS draw to
+// finish and time waiting for the 60Hz VSync. 60fps alone hides load.
+uint32_t b3GsGetLastGsWaitTicks(void);
+uint32_t b3GsGetLastVsyncWaitTicks(void);
+#endif
 b3GsCamera b3GsLookAt(b3GsPoint3 eye, b3GsPoint3 target, float focal);
 
 #endif
