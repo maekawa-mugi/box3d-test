@@ -610,3 +610,34 @@ label. An absent PRESS increment means an input/new-ELF issue.
 A `VU1 FAIL ...` status means initialization was rejected before
 any BOOT attempt. `BENCH SCENE ONLY` means switch to a
 BENCH 64/144/256/400 page before attempting VU1.
+
+## 2026-10-10: confirmed VU1 FAIL READBACK, guarded microcode recovery
+
+PCSX2 now reports `VU1 FAIL READBACK` in the upper-right HUD. This
+means the game's **MPG microcode preflight** rejected a mismatch
+between the DVP image in EE RAM and the VU1 microcode window. It does
+**not** mean MSCAL, the vertex transformer, or XGKICK ran.
+
+The upload path now adds an explicit VIF1 `FLUSHE` after the last
+`MPG` and before the DMA END tag. After the DMA channel finishes,
+the preflight also waits with a finite counter for VIF1 command idle
+(VPS and FQC fields). Only then does it compare the instruction
+words. If the official PS2SDK VIF1 MPG path still disagrees, log
+`BOX3D_VU1_MPG_MISMATCH` with the first word, expected and actual
+hex values, plus VIF status and errors.
+
+VU1 microcode memory is also mapped into EE's hardware address
+space. **Only after VIF has gone idle**, a mismatching instruction
+image is rewritten by the EE through the VU1 microcode MMIO window,
+then read back and rechecked in full. VU1 is enabled **only if
+every instruction matches exactly**. This backup affects only the
+one-time microprogram installation; box vertices still use VIF1
+DMA, execute on VU1, and reach GS via XGKICK.
+
+The HUD now distinguishes `VU1 READY DMA` (MPG succeeded),
+`VU1 READY CPU` (MMIO recovery verified), `VU1 FAIL VIF IDLE`
+(VIF never became idle), and `VU1 FAIL READBACK`
+(both verified upload methods failed). Starting mode is still
+`VU1 EE SAFE`; never skip the ACK/PATH3/VIF/BOOT ARM steps.
+Test BOOT in PCSX2 only once the HUD says READY. A successful
+readback by itself does not prove that MSCAL or XGKICK works.
