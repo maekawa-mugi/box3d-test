@@ -1443,7 +1443,7 @@ b3TreeStats b3TreeView_BoxCast( const b3TreeView* view, const b3BoxCastInput* in
 #if B3_TREE_HEURISTIC == 0
 
 // Median split heuristic
-static int b3PartitionMid( int* indices, b3Vec3* centers, int count )
+static int b3PartitionMid( int32_t* indices, b3Vec3* centers, int count )
 {
 	// Handle trivial case
 	if ( count <= 2 )
@@ -1608,7 +1608,7 @@ typedef struct b3TreePlane
 
 // "On Fast Construction of SAH-based Bounding Volume Hierarchies" by Ingo Wald
 // Returns the left child count
-static int b3PartitionSAH( int* indices, int* binIndices, b3AABB* boxes, int count )
+static int b3PartitionSAH( int32_t* indices, int32_t* binIndices, b3AABB* boxes, int count )
 {
 	B3_ASSERT( count > 0 );
 
@@ -1890,13 +1890,13 @@ static void b3BuildTree( b3DynamicTree* tree, int leafCount )
 {
 	b3TreeNode* nodes = tree->swapNodes;
 	const b3TreeNode* leaves = tree->leafNodes;
-	int* leafIndices = tree->leafIndices;
+	int32_t* leafIndices = tree->leafIndices;
 
 #if B3_TREE_HEURISTIC == 0
 	b3Vec3* leafCenters = tree->leafCenters;
 #else
 	b3AABB* leafBoxes = tree->leafBoxes;
-	int* binIndices = tree->binIndices;
+	int32_t* binIndices = tree->binIndices;
 #endif
 
 	// Bump allocation into the swap nodes.
@@ -2022,7 +2022,7 @@ int b3DynamicTree_Rebuild( b3DynamicTree* tree, bool fullBuild )
 		tree->rebuildCapacity = newCapacity;
 	}
 
-	int* leafIndices = tree->leafIndices;
+	int32_t* leafIndices = tree->leafIndices;
 	b3TreeNode* leaves = tree->leafNodes;
 #if B3_TREE_HEURISTIC == 0
 	b3Vec3* leafCenters = tree->leafCenters;
