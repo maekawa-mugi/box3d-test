@@ -1212,7 +1212,9 @@ and its 13-QW record layout are unchanged.
 
 Live calls now write the original caller's inputs directly to VU0
 DMEM, and copy only the five validated output QWs back to the caller.
-This eliminates two full 208-byte intermediate record copies per group.
+This removes the full 208-byte input staging copy per group and
+avoids transferring the input fields back into the caller. Only the
+five output QWs are committed after validation.
 Host ABI tests cover group counts 1..16, inactive-group guard words,
 output-only downloads and control placement. The portable host path
 uses volatile 32-bit words, while R5900 uses `LQ/SQ`. The build-time

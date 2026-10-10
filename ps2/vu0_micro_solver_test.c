@@ -75,7 +75,7 @@ int main(void)
     // active inputs/control are uploaded and only outputs are read back.
     // Tests the scalar host fallback for the same exact QW boundaries
     // used by the R5900 LQ/SQ path; not proof of real MMIO timing.
-    for(unsigned groups=1;groups<=B3_VU0_MICRO_GROUPS;groups+=groups==1?2:3)
+    for(unsigned groups=1;groups<=B3_VU0_MICRO_GROUPS;++groups)
     {
         _Alignas(16) volatile uint32_t vu[B3_VU0_MICRO_TOTAL_QWS*4u];
         _Alignas(16) b3Vu0MicroBlock source={0},received={0};
