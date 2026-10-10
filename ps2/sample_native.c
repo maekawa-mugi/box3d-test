@@ -67,6 +67,7 @@ typedef struct SceneBody
     b3Pos cachedPosition;
     b3Quat cachedRotation;
     b3GsPoint3 cachedVertices[8];
+    b3Vec3 cachedAxes[3];
 #endif
 } SceneBody;
 
@@ -179,21 +180,47 @@ static void cacheSceneBodyPoses(void)
         SceneBody* body=&s_scene.objects[i];
         body->cachedPosition=b3Body_GetPosition(body->id);
         body->cachedRotation=b3Body_GetRotation(body->id);
+        // Three quaternion rotations replace eight vertex rotations
+        // plus six face-normal rotations. The same basis serves both.
+        const b3Vec3 basis[3]={
+            {1.0f,0.0f,0.0f},{0.0f,1.0f,0.0f},{0.0f,0.0f,1.0f}
+        };
+        for(int a=0;a<3;++a)
+            body->cachedAxes[a]=b3RotateVector(body->cachedRotation,basis[a]);
+        const b3Vec3* ax=body->cachedAxes;
+        const float centerX=(float)body->cachedPosition.x+
+             body->localCenter.x*ax[0].x+
+             body->localCenter.y*ax[1].x+
+             body->localCenter.z*ax[2].x;
+        const float centerY=(float)body->cachedPosition.y+
+             body->localCenter.x*ax[0].y+
+             body->localCenter.y*ax[1].y+
+             body->localCenter.z*ax[2].y;
+        const float centerZ=(float)body->cachedPosition.z+
+             body->localCenter.x*ax[0].z+
+             body->localCenter.y*ax[1].z+
+             body->localCenter.z*ax[2].z;
+        const b3GsPoint3 dx=pt(body->half.x*ax[0].x,
+                               body->half.x*ax[0].y,
+                               body->half.x*ax[0].z);
+        const b3GsPoint3 dy=pt(body->half.y*ax[1].x,
+                               body->half.y*ax[1].y,
+                               body->half.y*ax[1].z);
+        const b3GsPoint3 dz=pt(body->half.z*ax[2].x,
+                               body->half.z*ax[2].y,
+                               body->half.z*ax[2].z);
         for(int v=0;v<8;++v)
         {
-            b3Vec3 local={
-                (v&1)?body->half.x:-body->half.x,
-                (v&2)?body->half.y:-body->half.y,
-                (v&4)?body->half.z:-body->half.z
-            };
-            local.x+=body->localCenter.x;
-            local.y+=body->localCenter.y;
-            local.z+=body->localCenter.z;
-            b3Vec3 rotated=b3RotateVector(body->cachedRotation,local);
-            body->cachedVertices[v]=pt(
-                (float)body->cachedPosition.x+rotated.x,
-                (float)body->cachedPosition.y+rotated.y,
-                (float)body->cachedPosition.z+rotated.z);
+            float x=(v&1)?dx.x:-dx.x;
+            float y=(v&1)?dx.y:-dx.y;
+            float z=(v&1)?dx.z:-dx.z;
+            x+=(v&2)?dy.x:-dy.x;
+            y+=(v&2)?dy.y:-dy.y;
+            z+=(v&2)?dy.z:-dy.z;
+            x+=(v&4)?dz.x:-dz.x;
+            y+=(v&4)?dz.y:-dz.y;
+            z+=(v&4)?dz.z:-dz.z;
+            body->cachedVertices[v]=pt(centerX+x,centerY+y,centerZ+z);
         }
     }
 }
@@ -244,6 +271,9 @@ static void scene_create(int kind)
 {
     s_scene.count=0;
     s_scene.kind=kind;
+#if defined(BOX3D_PS2_UNIFIED)
+    b3GsInvalidateGroundCache();
+#endif
     // Reuse the backing array across scenes without stale local offsets.
     for(int i=0;i<MAX_BOXES;++i)s_scene.objects[i].localCenter=pt(0,0,0);
 #if defined(BOX3D_GS_PROGRESSIVE)
@@ -589,18 +619,27 @@ static void draw_box(const SceneBody* body)
             {0,0,-1},{0,0,1},{-1,0,0},{1,0,0},{0,-1,0},{0,1,0}
         };
         const b3Vec3 light={0.44f,0.82f,0.36f};
+#if defined(BOX3D_GS_PROGRESSIVE)
+        const b3Vec3 toEye={
+            s_scene.camera.eye.x-(float)origin.x,
+            s_scene.camera.eye.y-(float)origin.y,
+            s_scene.camera.eye.z-(float)origin.z
+        };
+#endif
         for(int face=0;face<6;++face)
         {
+#if defined(BOX3D_PS2_UNIFIED)
+            const int axis=(face<2)?2:(face<4?0:1);
+            const float sign=(face&1)?1.0f:-1.0f;
+            const b3Vec3* nAxis=&body->cachedAxes[axis];
+            b3Vec3 n={sign*nAxis->x,sign*nAxis->y,sign*nAxis->z};
+#else
             b3Vec3 n=b3RotateVector(q,faceNormals[face]);
+#endif
 #if defined(BOX3D_GS_PROGRESSIVE)
             // EE back-face culling before 2-triangle emission.
             // About half of convex box faces are not visible from a
             // camera outside the hull. Retains GS Z for occlusion.
-            b3Vec3 toEye={
-                s_scene.camera.eye.x-(float)origin.x,
-                s_scene.camera.eye.y-(float)origin.y,
-                s_scene.camera.eye.z-(float)origin.z
-            };
             if(n.x*toEye.x+n.y*toEye.y+n.z*toEye.z<=0.0f)
             {
                 ++s_culledFaces;
@@ -815,6 +854,7 @@ static unsigned char s_shadowScreenValid[MAX_BOXES];
 static b3Ps2ShadowBounds s_shadowBounds[MAX_BOXES];
 static b3Ps2ShadowBounds s_shadowUnions[MAX_BOXES];
 static int s_shadowParents[MAX_BOXES];
+static int s_shadowFirst[MAX_BOXES],s_shadowNext[MAX_BOXES];
 #endif
 #if defined(BOX3D_PS2_UNIFIED)
 // One GS subtractive composite per connected component of overlapping
@@ -921,6 +961,16 @@ static void render_receiver_shadows(int receiver)
     }
     int groups=b3Ps2ShadowGroup(s_shadowBounds,s_scene.count,
                                 s_shadowParents,s_shadowUnions);
+    // Build the member list once instead of rescanning all N casters
+    // for each of the potentially N disconnected components.
+    for(int i=0;i<s_scene.count;++i)s_shadowFirst[i]=-1;
+    for(int caster=s_scene.count-1;caster>=1;--caster)
+    {
+        if(!s_shadowBounds[caster].valid)continue;
+        int root=s_shadowParents[caster];
+        s_shadowNext[caster]=s_shadowFirst[root];
+        s_shadowFirst[root]=caster;
+    }
     for(int root=1;root<s_scene.count;++root)
     {
         const b3Ps2ShadowBounds* group=&s_shadowUnions[root];
@@ -932,9 +982,9 @@ static void render_receiver_shadows(int receiver)
                              group->x0,group->y0,group->x1,group->y1,
                              majorX);
         b3GsShadowBegin();
-        for(int caster=1;caster<s_scene.count;++caster)
+        for(int caster=s_shadowFirst[root];caster>=0;
+            caster=s_shadowNext[caster])
         {
-            if(s_shadowParents[caster]!=root)continue;
             const b3ShadowPolygon* poly=&s_shadowProjectedCache[caster];
             if(poly->count<3)continue;
             if(s_shadowScreenValid[caster])
@@ -1282,7 +1332,16 @@ static void render(void)
     // Frame layers: atmosphere -> textured-look floor -> contact shadows
     // -> lit rigid bodies -> scene panel. Native GS GIF A+D throughout.
     b3GsSkyGradient();
+#if defined(BOX3D_PS2_UNIFIED)
+    if(!b3GsEmitCachedGround())
+    {
+        b3GsBeginGroundRecord();
+        render_ground();
+        b3GsEndGroundRecord();
+    }
+#else
     render_ground();
+#endif
 #if defined(BOX3D_GS_RECEIVER_SHADOWS)
     // Layered receiver rendering prevents Z-tested shadow holes:
     // 1. floor shadows are composited onto the floor

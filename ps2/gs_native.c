@@ -29,6 +29,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 typedef struct B3GsQword { uint64_t data, reg; } B3GsQword;
 #if defined(BOX3D_PS2_UNIFIED)
@@ -46,6 +47,12 @@ typedef struct B3GsQword { uint64_t data, reg; } B3GsQword;
 static _Alignas(64) B3GsQword s_packet[B3_GS_QWORDS];
 static unsigned s_used;
 static unsigned s_lastGifQwords;
+#if defined(BOX3D_PS2_UNIFIED)
+#define B3_GS_GROUND_CACHE_QWORDS 4096
+static _Alignas(64) B3GsQword s_groundCache[B3_GS_GROUND_CACHE_QWORDS];
+static unsigned s_groundCacheCount,s_groundRecordStart;
+static int s_groundCacheReady;
+#endif
 #if defined(BOX3D_PS2_UNIFIED)
 static uint32_t s_lastGsWaitTicks,s_lastVsyncWaitTicks;
 #endif
@@ -134,6 +141,40 @@ static void b3GsAD(uint64_t data, uint64_t reg)
         ++s_errors;
     }
 }
+#if defined(BOX3D_PS2_UNIFIED)
+void b3GsInvalidateGroundCache(void)
+{
+    s_groundCacheReady=0;
+    s_groundCacheCount=0;
+}
+int b3GsEmitCachedGround(void)
+{
+    if(!s_groundCacheReady)return 0;
+    if(s_used+s_groundCacheCount>=B3_GS_QWORDS)
+    {
+        ++s_errors;
+        return 1;
+    }
+    memcpy(&s_packet[s_used],s_groundCache,
+           s_groundCacheCount*sizeof(s_groundCache[0]));
+    s_used+=s_groundCacheCount;
+    return 1;
+}
+void b3GsBeginGroundRecord(void)
+{
+    s_groundRecordStart=s_used;
+}
+void b3GsEndGroundRecord(void)
+{
+    if(s_errors || s_used<s_groundRecordStart)return;
+    unsigned count=s_used-s_groundRecordStart;
+    if(count>B3_GS_GROUND_CACHE_QWORDS)return;
+    memcpy(s_groundCache,&s_packet[s_groundRecordStart],
+           count*sizeof(s_groundCache[0]));
+    s_groundCacheCount=count;
+    s_groundCacheReady=1;
+}
+#endif
 
 
 // GS framebuffer pages: PSMCT16/PSMZ16 = 64x64 pixels,

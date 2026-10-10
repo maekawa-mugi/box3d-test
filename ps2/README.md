@@ -362,3 +362,19 @@ grouping. Only the fast direct XYZ emission is disabled; the original
 clipped triangle routine handles raster-unsafe polygons. This prevents
 an out-of-range but valid silhouette from unnecessarily expanding a
 PCSS group to the full screen.
+
+## 2026-10-10: static floor GIF cache and box basis reuse
+
+The demo's camera/ground remains fixed within a page. Rather than
+reprojecting all 288 checker-floor triangles every frame, its GS GIF A+D
+commands are now recorded after the first rendering and replayed on each
+following frame. Switching pages invalidates the cache, which is rebuilt
+for the next scene camera; the framebuffer address is not captured.
+
+Each box's 8 world corners and 6 face normals now reuse three quaternion-
+rotated basis vectors per frame rather than performing 14 separate vector
+rotations. Shadow polygons use the exact same cached box corners. A
+per-component linked member list also replaces N-component-by-N-caster
+scans during receiver shadow-mask rasterization. These optimizations
+preserve the default 4-substep and scalar VU0 physics settings.
+Rebuild/PCS​​X2 visual comparison is required to confirm frame-time gains.

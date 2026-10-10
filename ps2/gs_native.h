@@ -36,6 +36,12 @@ typedef struct b3GsCamera {
     float focal;
 } b3GsCamera;
 #if defined(BOX3D_PS2_UNIFIED)
+// Cache the camera-dependent (but frame-independent) checker floor GIF
+// commands once after scene creation, before receiver shadows.
+void b3GsInvalidateGroundCache(void);
+int b3GsEmitCachedGround(void);
+void b3GsBeginGroundRecord(void);
+void b3GsEndGroundRecord(void);
 // Each box projects its eight shared vertices only once per frame,
 // instead of repeating three perspective divides for every triangle.
 typedef struct b3GsProjectedVertex {
