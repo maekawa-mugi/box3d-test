@@ -811,7 +811,24 @@ static void render_official_hud(void)
     b3GsOverlayText(227,195,"PCF 3X3",250,236,130);
 #endif
 #elif defined(BOX3D_GS_KAWASE_SHADOWS)
+#if defined(BOX3D_GS_KAWASE_WIDE)
+#if defined(BOX3D_GS_PROGRESSIVE)
+    b3GsOverlayText(28,82,"WIDE DUAL KAWASE",188,226,240);
+#else
+    b3GsOverlayText(14,37,"WIDE DUAL KAWASE",188,226,240);
+#endif
+#else
     b3GsOverlayText(14,37,"SOFT GS KAWASE",188,226,240);
+#endif
+#endif
+#if defined(BOX3D_PS2_PAD_NAV)
+#if defined(BOX3D_GS_PROGRESSIVE)
+    b3GsOverlayPanel(14,B3_PS2_GS_H-64,288,48);
+    b3GsOverlayText(26,B3_PS2_GS_H-50,"LEFT  PREV  RIGHT  NEXT",213,226,236);
+#else
+    b3GsOverlayPanel(6,B3_PS2_GS_H-24,182,19);
+    b3GsOverlayText(10,B3_PS2_GS_H-19,"LEFT PREV RIGHT NEXT",213,226,236);
+#endif
 #endif
 }
 #endif
