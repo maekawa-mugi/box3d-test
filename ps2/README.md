@@ -681,3 +681,62 @@ qword count and face-culling diagnostics. The upstream C++ library has
 Native GS high-resolution implementation details and VRAM calculations
 are in `ps2/PROGRESSIVE_GS.md`. Proper VU1 microcode/VIF vertex
 batching and the unported original demos remain on the porting backlog.
+
+## Eight-scene 480p ragdoll, pad navigation, 480p TEX0, expanded Kawase
+
+New opt-in builds on `experiment/ps2-ee-scalar`:
+- `ps2/box3d_ps2_samples_pcf_progressive.elf`: **640x480p**
+  with **Ragdoll/Box** as the eighth scene. The old PCF filter is
+  preserved but now reads the correct progressive PSMCT32 mask with
+  TEX0 exponents **TW=10, TH=9**.
+- `ps2/box3d_ps2_samples_kawase_wide.elf`: **320x224**
+  expanded Dual Kawase, low-level GS, with 40x28 eighth-resolution
+  render target pair.
+- `ps2/box3d_ps2_samples_kawase_wide_progressive.elf`:
+  **640x480p**, expanded Dual Kawase, with corresponding 80x60
+  eighth-resolution pair and the eight progressive scenes.
+
+All three above enable **PS2 controller port 1 (slot 0) D-pad LEFT /
+RIGHT**. On a newly pressed button the current physics world is
+destroyed and the preceding/next scene starts immediately. Buttons
+are edge-triggered, not repeated per simulation frame. The regular
+600-frame automatic scene cycle remains a fallback. To access the
+new ragdoll immediately from the initial Box Stack scene, tap **LEFT
+once**; the scene index wraps from 0 to 7.
+
+The `Ragdoll/Box` scene calls the actual upstream
+`shared/human.c` `CreateHuman()` using the original
+friction torque=5, spring=1Hz and damping=.7 settings. Box3D owns
+12 capsule bodies and real articulated joints; cuboid visual proxies
+follow those exact body IDs and are offset to capsule midpoints.
+The PS2 image is not yet a complete rounded-capsule mesh.
+
+Expanded blur uses disjoint eighth-level ping-pong VRAM and small
+adjacent samples at each level to avoid widely separated four-lobe
+samples. At 320x224 the two 40x28 32bpp surfaces cost 8192 bytes each.
+At 640x480, page-rounded **total** color+Z+shadow+pyramid usage is
+3,956,736 bytes. GS hardware bilinear and GIF DMA are used for every
+pass; CPU does not perform per-pixel convolution.
+
+Build all:
+```sh
+git pull --ff-only origin experiment/ps2-ee-scalar
+sh ps2/build_ee.sh
+# New ELF: ps2/box3d_ps2_samples_kawase_wide.elf
+# New ELF: ps2/box3d_ps2_samples_kawase_wide_progressive.elf
+# Updated ELF: ps2/box3d_ps2_samples_pcf_progressive.elf
+```
+
+Host geometry budget check:
+```sh
+cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic \
+  ps2/kawase_layout_test.c -o /tmp/box3d_gs_layout
+/tmp/box3d_gs_layout
+```
+For branch-level details, see `ps2/PROGRESSIVE_GS.md`.
+
+**R5900 ELF compilation/linking and PCSX2 playback of these changes
+remain unverified here.** The host arithmetic/padding check and
+source-level conditional-compilation balance checks passed. If the
+controller does not initialize, serial logs begin with
+`BOX3D_PAD_WARN`; pad-enabled variants continue cycling scenes.
