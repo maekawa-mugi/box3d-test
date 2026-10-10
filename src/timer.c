@@ -569,23 +569,15 @@ void b3JoinThread( b3Thread* t )
 #ifndef BOX3D_PS2_COUNT_HZ
 #define BOX3D_PS2_COUNT_HZ 147456000.0
 #endif
-static uint32_t s_ps2LastCount = 0;
-static uint64_t s_ps2ExtendedCount = 0;
-static bool s_ps2ClockInitialized = false;
+#include "ps2_count.h"
+
+static b3Ps2CountState s_ps2Count = { 0 };
 
 uint64_t b3GetTicks( void )
 {
     uint32_t now;
     __asm__ volatile ("mfc0 %0, $9" : "=r" (now));
-    if (!s_ps2ClockInitialized)
-    {
-        s_ps2LastCount = now;
-        s_ps2ClockInitialized = true;
-        return 0;
-    }
-    s_ps2ExtendedCount += (uint32_t)(now - s_ps2LastCount);
-    s_ps2LastCount = now;
-    return s_ps2ExtendedCount;
+    return b3Ps2ExtendCount( &s_ps2Count, now );
 }
 
 float b3GetMilliseconds( uint64_t ticks )

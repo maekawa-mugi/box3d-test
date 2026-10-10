@@ -213,6 +213,14 @@ endif()
 # Optional headless gravity/contact regression test for EE and host compilers.
 option(BOX3D_PS2_SMOKE "Build the PS2-port headless smoke test" OFF)
 if(BOX3D_PS2_SMOKE)
+    if(BOX3D_PS2)
+        message(FATAL_ERROR "Build the PS2 smoke ELF with ps2/Makefile and PS2SDK, not CMake.")
+    endif()
     add_executable(box3d_ps2_smoke ps2/smoke.c)
     target_link_libraries(box3d_ps2_smoke PRIVATE box3d::box3d)
+
+    # Host-only test of the CP0 Count software extension.
+    add_executable(box3d_ps2_count_wrap ps2/count_wrap_test.c)
+    target_include_directories(box3d_ps2_count_wrap PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    set_target_properties(box3d_ps2_count_wrap PROPERTIES C_STANDARD 17 C_STANDARD_REQUIRED YES)
 endif()

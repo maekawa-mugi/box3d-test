@@ -1,0 +1,32 @@
+name: PS2 scalar baseline (host)
+
+on:
+  push:
+    branches: [experiment/ps2-ee-scalar]
+  pull_request:
+    paths: ['ps2/**', 'src/**', 'include/**', 'CMakeLists.txt', '.github/workflows/ps2-scalar-smoke.yml']
+  workflow_dispatch:
+
+jobs:
+  scalar-smoke:
+    name: scalar smoke (${{ matrix.config }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure without x86 SIMD
+        run: >-
+          cmake -S . -B build/ps2-smoke -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+          -DBUILD_SHARED_LIBS=OFF -DBOX3D_DISABLE_SIMD=ON -DBOX3D_AVX2=OFF
+          -DBOX3D_SAMPLES=OFF -DBOX3D_UNIT_TESTS=OFF -DBOX3D_PS2_SMOKE=ON
+      - name: Build
+        run: cmake --build build/ps2-smoke --parallel --target box3d_ps2_smoke box3d_ps2_count_wrap
+      - name: Test world simulation and resource cleanup
+        run: ./build/ps2-smoke/bin/box3d_ps2_smoke
+      - name: Test count wrap extension
+        run: ./build/ps2-smoke/bin/box3d_ps2_count_wrap

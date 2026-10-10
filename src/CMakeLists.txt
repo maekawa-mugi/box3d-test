@@ -59,6 +59,8 @@ set(BOX3D_SOURCE_FILES
 	physics_world.c
 	physics_world.h
 	platform.h
+	platform_ps2.h
+	ps2_count.h
 	prismatic_joint.c
 	qsort.h
 	rapidhash.h
@@ -246,7 +248,8 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/../include" PREFIX "include" FILE
 add_library(box3d::box3d ALIAS box3d)
 
 # libm is required on many Unix toolchains for sqrtf, etc.
-if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+# PS2SDK/newlib also needs libm for the scalar float math functions.
+if((UNIX AND NOT APPLE AND NOT EMSCRIPTEN) OR BOX3D_PS2)
   target_link_libraries(box3d PUBLIC m)
 endif()
 
