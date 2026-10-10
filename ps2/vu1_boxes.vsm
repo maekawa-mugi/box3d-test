@@ -51,6 +51,12 @@ vu1_vertex_loop:
         mulw.z     VF05,VF07,VF06          NOP
         add.xyz    VF05,VF05,VF08          NOP
         ftoi0.xyz  VF05,VF05               NOP
+        ; Upper FTOI0 result is not immediately available to SQI.
+        ; Store only after the VU1 conversion pipeline has retired.
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
         NOP                                sqi         VF05,(VI02++)
         NOP                                ibne        VI01,VI07,vu1_vertex_loop
         NOP                                NOP
@@ -69,6 +75,11 @@ vu1_emit_loop:
         NOP                                iaddiu      VI11,VI09,24
         NOP                                lq          VF09,0(VI10)
         NOP                                lq          VF10,0(VI11)
+        ; SQI consumes the QW just loaded. Respect the LS pipeline.
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
         NOP                                sqi         VF10,(VI06++)
         NOP                                sqi         VF09,(VI06++)
         NOP                                iaddiu      VI04,VI04,1

@@ -1034,3 +1034,38 @@ not a stale pad variable. Because the EE FPU and VU0 round differently,
 the guard is tolerant (0.2% relative plus absolute) rather than
 bit-exact. This checks the first integration step, not full physics
 determinism.
+ 
+## 2026-10-11: VU1 always-on / TRIANGLE VU0 toggle (R10)
+
+The debug stage protocol is removed from the regular unified ELF.
+After GS initialization, VIF1 normal-DMA MPG upload and VU1 micro
+readback run automatically. Every BENCH scene uses the full VU1
+geometry batch without any TRIANGLE presses. If initialization or
+DMA submission fails explicitly, render EE fallback solids rather
+than leaving an empty picture.
+
+The VU0 micro upload/readback/64-lane differential check also runs
+once after GS startup. Its Box3D normal-contact backend remains
+**OFF** by default. Each TRIANGLE press toggles only mode 0
+(EE scalar) and mode 6 (real VU0 micro via VCALLMS) if startup
+validation succeeded. There is no macro-mode 5 or SELECT protocol
+in the user-facing controller. The HUD says VU1 AUTO ON and
+TRIANGLE VU0 ON/OFF, or a clear failure status.
+
+LEFT/RIGHT change scenes; UP selects S4/S2; CROSS controls BENCH
+sleeping; SQUARE changes shadows. A single ELF offers both EE and
+VU0 micro performance comparisons while keeping VU1 drawing active.
+
+The VU1 .vsm also gains conservative load/result pipeline spacing
+at FTOI0 -> SQI and LQ -> SQI, suspected to contribute to intermittent
+missing GIF PATH1 triangles. This needs PCSX2 visual verification.
+There is no claim yet that BOX 400 geometry is always visible or that
+VU0 mode 6 meets 60 FPS. One VCALLMS per SIMD4 contact remains costly.
+
+Safety refinement: automatically initialize both VU units only
+**after one completed EE GS render/present**. Earlier VIF1 init
+at startup could cause a BIOS return; successful staged tests used
+an already initialized GS/GIF path. Unified megademo ELF now opens
+directly to BENCH 400 (page 12/12) and renders one EE frame while
+the units are being initialized. All subsequent frames use VU1
+unless its verified normal DMA path fails. No multi-press protocol.
