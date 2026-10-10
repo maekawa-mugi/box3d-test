@@ -1,0 +1,69 @@
+; SPDX-License-Identifier: MIT
+; Real VU0 micro mode, 16 independent 4-lane contact normal updates.
+; VU0 DMEM QW[0] reserved, QW[1..208] are 16 records of 13 QWs.
+; Inputs +0..7: old, mass, speed, bias, pointSum, manifoldSum,
+;               twistSum, leverArm
+; Outputs +8..12: new, delta, pointSum, manifoldSum, twistSum.
+; One microprogram invocation covers 16 x 4 = 64 constraint lanes.
+; Never use VF00.w as zero: VF00.w is constant 1.
+        .vu
+        .align 4
+        .global B3Vu0Contacts_CodeStart
+        .global B3Vu0Contacts_CodeEnd
+B3Vu0Contacts_CodeStart:
+        NOP                                iaddiu VI01,VI00,1
+        NOP                                iaddiu VI04,VI00,16
+vu0_contact_loop:
+        NOP                                lq VF01,0(VI01)
+        NOP                                lq VF02,1(VI01)
+        NOP                                lq VF03,2(VI01)
+        NOP                                lq VF04,3(VI01)
+        NOP                                lq VF05,4(VI01)
+        NOP                                lq VF06,5(VI01)
+        NOP                                lq VF07,6(VI01)
+        NOP                                lq VF08,7(VI01)
+        ; Conservative load-to-upper scheduling before first use.
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        add.xyzw   VF09,VF03,VF04          NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        mul.xyzw   VF10,VF02,VF09          NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        sub.xyzw   VF11,VF01,VF10          NOP
+        sub.xyzw   VF20,VF01,VF01          NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        max.xyzw   VF11,VF11,VF20          NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        sub.xyzw   VF12,VF11,VF01          NOP
+        add.xyzw   VF13,VF05,VF11          NOP
+        add.xyzw   VF14,VF06,VF11          NOP
+        mul.xyzw   VF15,VF08,VF11          NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        add.xyzw   VF15,VF07,VF15          NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                NOP
+        NOP                                sq VF11,8(VI01)
+        NOP                                sq VF12,9(VI01)
+        NOP                                sq VF13,10(VI01)
+        NOP                                sq VF14,11(VI01)
+        NOP                                sq VF15,12(VI01)
+        NOP                                iaddiu VI01,VI01,13
+        NOP                                iaddiu VI04,VI04,-1
+        NOP                                ibne VI04,VI00,vu0_contact_loop
+        NOP                                NOP
+        NOP[E]                             NOP
+        NOP                                NOP
+        .align 4
+B3Vu0Contacts_CodeEnd:

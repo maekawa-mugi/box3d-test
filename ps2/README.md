@@ -926,3 +926,54 @@ Runtime performance is not yet verified in PCSX2; this targets CPU
 shadow projection/grouping, not the remaining cost of GS commands.
 Measure SHADOW PCF/PCSS vs SHADOW OFF after settling at SL1, and
 check for matching shadow silhouettes before reporting improvement.
+
+## 2026-10-11: real VU0 micro-mode contact kernel, first gated hardware step
+
+The 400-awake S4 benchmark costs ~76.6ms physics; after sleep 0ms,
+a 400-box VU1 scene without shadows reaches 60 FPS. This step starts
+a **real VU0 micro-mode solver path**, rather than adding more EE
+COP2 macro instructions. It is NOT yet the Box3D world-step backend.
+
+`ps2/vu0_micro_solver.vsm` is a new DVP microprogram stored in
+VU0's 4KB micro memory, launched through **VCALLMS 0**, not
+the existing `ps2_vu0.c` macro-mode helpers. One launch
+processes sixteen 4-lane, independent normal impulse records,
+**64 contact point lanes** total. DMEM at **0x11004000**
+holds 209 QWs = 3344 bytes (below VU0's 256-QW limit).
+The microcode image goes to **0x11000000**. Each 13-QW
+record holds 8 inputs and 5 outputs, updating the normal
+impulse, delta and three aggregates; association matches
+Box3D's 4-lane normal impulse scalar expression. Both
+4KB windows differ from VU1's corresponding addresses.
+
+No VU0 memory access at startup. The known-good
+EE solver, VU1R8 drawing, S4 and shadow mode are unchanged.
+The new **SELECT** control works only in BENCH scenes and
+advances one stage per button press:
+
+| SELECT presses | VU0 panel | Hardware action |
+| --- | --- | --- |
+| 0 | VU0 NOT INIT | none |
+| 1 | VU0 ARM | **none**; EE-safe acknowledgment |
+| 2 | VU0 UPLOAD OK | VU0 micro image copy to 0x11000000 |
+| 3 | VU0 VERIFY OK | read back full uploaded image |
+| 4 | VU0 DIFF OK | upload 16 records, VCALLMS 0, compare 320 outputs to reference |
+
+Read PCSX2 stdout lines prefixed `BOX3D_VU0_PHASE`,
+`BOX3D_PAD_SELECT`, `BOX3D_VU0_PASS`, and
+`BOX3D_VU0_FAIL`. At stage 4 the diagnostic must show
+`VU0 MICRO DIFF OK` in the log; if it resets to BIOS, report
+which stage caused the reset. Use a fresh ELF, not savestates.
+
+The host ABI/differential reference test runs in CI:
+`cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic
+ps2/vu0_micro_solver_test.c -lm -o /tmp/b3_vu0_micro_test
+&& /tmp/b3_vu0_micro_test`.
+
+**Limitations:** a host test cannot execute the microprogram or
+validate VU0 hardware timing. The kernel does not yet apply
+impulses to Box3D body velocities or perform broadphase,
+friction and all substeps. Full 400-awake 60 FPS requires
+benchmarked batched graph-color solve integration and
+additional shadow optimizations; VU0 64-lane micro
+correctness is only the first hardware milestone.

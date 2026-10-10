@@ -13,6 +13,7 @@
 #include "unified_demo.h"
 #include "../src/ps2_vu0.h"
 #include "vu1_boxes.h"
+#include "vu0_micro_solver.h"
 #endif
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
 #include "ee_clock.h"
@@ -97,6 +98,8 @@ static int s_padReady;
 static int s_simSubsteps=4;
 static int s_stressSleeping=0; // Default: force all bodies awake in BENCH scenes
 static int s_vu0Mode=0;
+static int s_vu0MicroStage; // 0=none,1=armed,2=upload,3=verify,4=diff
+static int s_vu0MicroResult; // most recent requested hardware stage
 static int s_shadowVisualMode=0; // 0=PCSS,1=PCF,2=HARD,3=OFF,4=LEGACY
 // Valid only for static-camera, fully sleeping BENCH scenes.
 static int s_shadowBenchCacheValid;
@@ -143,7 +146,7 @@ static int pad_nav_poll(void)
     if(!padRead(0,0,&buttons))return 0;
     uint16_t held=(uint16_t)(~buttons.btns)&(PAD_LEFT|PAD_RIGHT
 #if defined(BOX3D_PS2_UNIFIED)
-                                             |PAD_UP|PAD_DOWN|PAD_SQUARE|PAD_TRIANGLE|PAD_CROSS
+                                             |PAD_UP|PAD_DOWN|PAD_SQUARE|PAD_TRIANGLE|PAD_CROSS|PAD_SELECT
 #endif
                                              );
     uint16_t pressed=(uint16_t)(held&~s_padHeld);
@@ -158,6 +161,27 @@ static int pad_nav_poll(void)
         printf("BOX3D_PHYS_SLEEP,scene=%d,enabled=%d,awake=%d,substeps=%d\n",
                s_scene.kind,s_stressSleeping,
                b3World_GetAwakeBodyCount(s_scene.world),s_simSubsteps);
+    }
+    // SELECT is deliberately separate from DOWN's VU0 macro-mode A/B.
+    // It is the ONLY entry to the new VU0 microcode/MMIO experiment,
+    // always between completed Box3D world steps.
+    if((pressed&PAD_SELECT) && s_scene.kind>=8)
+    {
+        s_vu0MicroStage=(s_vu0MicroStage+1)%5;
+        s_vu0MicroResult=0;
+        if(s_vu0MicroStage==1)
+        {
+            puts("BOX3D_VU0_PHASE,armed,no_mmio=1");
+            s_vu0MicroResult=1;
+        }
+        else if(s_vu0MicroStage==2)
+            s_vu0MicroResult=b3Vu0MicroUpload();
+        else if(s_vu0MicroStage==3)
+            s_vu0MicroResult=b3Vu0MicroVerify();
+        else if(s_vu0MicroStage==4)
+            s_vu0MicroResult=b3Vu0MicroDifferentialTest();
+        printf("BOX3D_PAD_SELECT,stage=%d,result=%d,status=%s\n",
+               s_vu0MicroStage,s_vu0MicroResult,b3Vu0MicroStatus());
     }
     if(pressed&PAD_UP)
     {
@@ -1438,6 +1462,24 @@ static void render_official_hud(void)
     // capped to 60 by VSync. Includes physics, GS packet build and
     // DMA/GS FINISH, excludes deliberate VSync idle time.
     char meter[64];
+    // Independent VU0 micro-mode diagnostic; no hardware is accessed
+    // by drawing this panel, and VU1 BOX 400 stays untouched.
+    if(s_scene.kind>=8)
+    {
+        char vu0Line[32];
+        static const char* const stages[]={
+            "NOT INIT","ARM","UPLOAD","VERIFY","DIFF"
+        };
+        snprintf(vu0Line,sizeof(vu0Line),"VU0 %s %s",
+                 stages[s_vu0MicroStage],
+                 s_vu0MicroStage>1?
+                    (s_vu0MicroResult?"OK":"FAIL"):"");
+        b3GsOverlayPanel(460,164,166,70);
+        b3GsOverlayText(468,174,"SELECT MICRO",227,215,143);
+        b3GsOverlayText(468,205,vu0Line,
+                        s_vu0MicroResult?155:255,
+                        s_vu0MicroResult?243:159,176);
+    }
     b3GsOverlayPanel(14,164,440,70);
     snprintf(meter,sizeof(meter),"PHYS %.1f  DRAW %.1f",
              (double)s_lastPhysicsMs,(double)s_lastBuildMs);
@@ -1707,7 +1749,7 @@ int main(void)
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
 #if defined(BOX3D_PS2_UNIFIED)
-    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off_legacy,CROSS=toggle_bench_sleep,TRIANGLE=vu1_ee_ack_path3_init_arm_init_verify_arm_verify_vif_boot_vu_1_8_all");
+    puts("BOX3D_PAD_EXTRA,UP=substeps,DOWN=vu0_macro_0_5,SQUARE=shadow,CROSS=sleep,SELECT=vu0_micro_arm_upload_verify_run,TRIANGLE=vu1_diagnostics");
 #endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
@@ -1738,7 +1780,7 @@ int main(void)
     // until the user enters the explicit INIT diagnostic stage.
     s_vu1Ready=0;
     puts("BOX3D_VU1_STARTUP,lazy=1,ready=0,ee_safe=1");
-    puts("BOX3D_VU1_BUILD,revision=vu1r8_sleep_shadow_cache");
+    puts("BOX3D_VU1_BUILD,revision=vu1r8_sleep_shadow_cache,vu0=micro_stage1");
     puts("BOX3D_VU1_SAFE_DEFAULT,ee_geometry=1,triangle=ack_path3_init_arm_init_verify_arm_verify_vif_boot");
 #endif
 #if defined(BOX3D_PS2_PAD_NAV)
