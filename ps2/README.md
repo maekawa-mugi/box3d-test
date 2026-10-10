@@ -305,3 +305,25 @@ from solid-body draw packets. Any box containing near-clipped or
 out-of-extended-raster vertices falls back to the original clipped
 triangle path. Shadow geometry and physics remain unchanged.
 Before/after equivalence of real GS depth and frame times is unverified.
+
+## 2026-10-10: physics A/B controls and build-time diagnostics
+
+The single demo ELF keeps its previous default: four physics substeps
+and VU0 scalar mode 0. With a connected controller, **UP** toggles
+four/two substeps; **DOWN** toggles VU0 scalar/mode-5 kernels. This
+allows fair side-by-side CPU measurements without silently changing
+physics stability or the default 400-body stress definition. Toggle
+only outside the world step, as required by the existing VU0 kernels.
+Mode 5 may change numeric results, and must not be declared equivalent
+without comparison against the scalar reference.
+
+The 60-frame BOX3D_PERF log now separates CPU shadow-mask/group build
+(`avg_shadow_ms`) and opaque box-geometry command construction
+(`avg_box_ms`) from total build time. These two intervals are subsets
+of `avg_build_ms` and must not be added to it as independent costs.
+New `substeps` and `vu0` columns record the actual physics mode.
+The GSWAIT metric is an elapsed DMA/FINISH wait, not GPU utilization.
+
+The host scalar smoke workflow additionally compiles/runs PCSS geometry,
+union, blur-tier and VRAM allocation regressions. Cross-compilation and
+actual R5900/GS pixel output still require PS2DEV/PCSX2.

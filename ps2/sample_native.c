@@ -11,6 +11,7 @@
 #include "gs_native.h"
 #if defined(BOX3D_PS2_UNIFIED)
 #include "unified_demo.h"
+#include "../src/ps2_vu0.h"
 #endif
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
 #include "ee_clock.h"
@@ -89,6 +90,11 @@ static Human s_ragdoll;
 static _Alignas(64) unsigned char s_padBuffer[256];
 static uint16_t s_padHeld;
 static int s_padReady;
+#if defined(BOX3D_PS2_UNIFIED)
+// User-selectable physics A/B modes; change between completed steps only.
+static int s_simSubsteps=4;
+static int s_vu0Mode=0;
+#endif
 static void pad_nav_init(void)
 {
     sceSifInitRpc(0);
@@ -117,9 +123,28 @@ static int pad_nav_poll(void)
     }
     struct padButtonStatus buttons;
     if(!padRead(0,0,&buttons))return 0;
-    uint16_t held=(uint16_t)(~buttons.btns)&(PAD_LEFT|PAD_RIGHT);
+    uint16_t held=(uint16_t)(~buttons.btns)&(PAD_LEFT|PAD_RIGHT
+#if defined(BOX3D_PS2_UNIFIED)
+                                             |PAD_UP|PAD_DOWN
+#endif
+                                             );
     uint16_t pressed=(uint16_t)(held&~s_padHeld);
     s_padHeld=held;
+#if defined(BOX3D_PS2_UNIFIED)
+    if(pressed&PAD_UP)
+    {
+        s_simSubsteps=(s_simSubsteps==4)?2:4;
+        printf("BOX3D_PHYS_MODE,substeps=%d,vu0=%d\n",
+               s_simSubsteps,s_vu0Mode);
+    }
+    if(pressed&PAD_DOWN)
+    {
+        s_vu0Mode=(s_vu0Mode==0)?5:0;
+        b3Ps2SetVU0Enabled(s_vu0Mode);
+        printf("BOX3D_PHYS_MODE,substeps=%d,vu0=%d\n",
+               s_simSubsteps,s_vu0Mode);
+    }
+#endif
     if(pressed&PAD_LEFT)return -1;
     if(pressed&PAD_RIGHT)return +1;
     return 0;
@@ -132,6 +157,8 @@ static uint32_t s_beforeGsSubmitTicks;
 static float s_lastPhysicsMs,s_lastBuildMs,s_lastGpuMs,s_lastVsyncMs;
 static float s_lastWorkPct;
 static uint64_t s_sumPhysicsTicks,s_sumBuildTicks,s_sumGsTicks;
+static uint64_t s_sumShadowTicks,s_sumBoxTicks;
+static uint32_t s_frameShadowTicks,s_frameBoxTicks;
 static uint32_t s_maxWorkTicks;
 static int s_perfSamples;
 #endif
@@ -230,6 +257,8 @@ static void scene_create(int kind)
     s_sumPhysicsTicks=0;
     s_sumBuildTicks=0;
     s_sumGsTicks=0;
+    s_sumShadowTicks=0;
+    s_sumBoxTicks=0;
     s_maxWorkTicks=0;
     s_perfSamples=0;
 #endif
@@ -1127,7 +1156,8 @@ static void render_official_hud(void)
     b3GsOverlayText(28,24,"BOX3D PS2 480P",239,245,247);
     b3GsOverlayText(28,53,sceneNames[s_scene.kind],189,214,223);
     char page[48];
-    snprintf(page,sizeof(page),"PAGE %d/%d  PCSS",s_scene.kind+1,SCENE_COUNT);
+    snprintf(page,sizeof(page),"PAGE %d/%d PCSS S%d V%d",
+             s_scene.kind+1,SCENE_COUNT,s_simSubsteps,s_vu0Mode);
     b3GsOverlayText(28,82,page,221,233,244);
 #else
     b3GsOverlayPanel(14,14,310,104);
@@ -1210,6 +1240,8 @@ static void render_official_hud(void)
 static void render(void)
 {
 #if defined(BOX3D_PS2_UNIFIED)
+    s_frameShadowTicks=0;
+    s_frameBoxTicks=0;
     cacheSceneBodyPoses();
 #endif
 #if defined(BOX3D_GS_PROGRESSIVE)
@@ -1228,7 +1260,13 @@ static void render(void)
     // 2. opaque ramp covers any floor shadows behind it
     // 3. ramp-local shadows land on the now-visible ramp
     // 4. dynamics are drawn last and occlude their own floor shadows.
+#if defined(BOX3D_PS2_UNIFIED)
+    uint32_t phaseStart=b3Ps2ReadCpuCycles();
+#endif
     render_receiver_shadows(0);
+#if defined(BOX3D_PS2_UNIFIED)
+    s_frameShadowTicks+=b3Ps2DeltaCpuCycles(phaseStart,b3Ps2ReadCpuCycles());
+#endif
     int firstDynamic=1;
     if(s_scene.kind==1
 #if defined(BOX3D_GS_PROGRESSIVE)
@@ -1236,12 +1274,28 @@ static void render(void)
 #endif
       )
     {
+#if defined(BOX3D_PS2_UNIFIED)
+        phaseStart=b3Ps2ReadCpuCycles();
+#endif
         draw_box(&s_scene.objects[1]); // static inclined plane / platform
+#if defined(BOX3D_PS2_UNIFIED)
+        s_frameBoxTicks+=b3Ps2DeltaCpuCycles(phaseStart,b3Ps2ReadCpuCycles());
+        phaseStart=b3Ps2ReadCpuCycles();
+#endif
         render_receiver_shadows(1);
+#if defined(BOX3D_PS2_UNIFIED)
+        s_frameShadowTicks+=b3Ps2DeltaCpuCycles(phaseStart,b3Ps2ReadCpuCycles());
+#endif
         firstDynamic=2;
     }
+#if defined(BOX3D_PS2_UNIFIED)
+    phaseStart=b3Ps2ReadCpuCycles();
+#endif
     for(int i=firstDynamic;i<s_scene.count;++i)
         draw_box(&s_scene.objects[i]);
+#if defined(BOX3D_PS2_UNIFIED)
+    s_frameBoxTicks+=b3Ps2DeltaCpuCycles(phaseStart,b3Ps2ReadCpuCycles());
+#endif
 #if defined(BOX3D_GS_KAWASE_DEBUG)
     b3GsKawaseDebugOverlay();
 #endif
@@ -1272,6 +1326,9 @@ int main(void)
 {
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
+#if defined(BOX3D_PS2_UNIFIED)
+    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5");
+#endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
     puts("BOX3D_UNIFIED,video=640x480p,shadow=PCSS,pcf_filter=4tap_contact_9tap_prefiltered_far,pagination=dpad,stress=64_144_256_400");
@@ -1333,7 +1390,11 @@ int main(void)
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
         uint32_t frameStart=b3Ps2ReadCpuCycles();
 #endif
+#if defined(BOX3D_PS2_UNIFIED)
+        b3World_Step(s_scene.world,1.0f/60.0f,s_simSubsteps);
+#else
         b3World_Step(s_scene.world,1.0f/60.0f,4);
+#endif
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
         uint32_t physicsEnd=b3Ps2ReadCpuCycles();
 #endif
@@ -1359,25 +1420,32 @@ int main(void)
             s_sumPhysicsTicks+=physicsTicks;
             s_sumBuildTicks+=buildTicks;
             s_sumGsTicks+=gpuTicks;
+            s_sumShadowTicks+=s_frameShadowTicks;
+            s_sumBoxTicks+=s_frameBoxTicks;
             if(workTicks>s_maxWorkTicks)s_maxWorkTicks=workTicks;
             ++s_perfSamples;
             if(s_perfSamples>=60)
             {
                 double divisor=294912.0*(double)s_perfSamples;
-                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u\n",
+                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_shadow_ms=%.3f,avg_box_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u,substeps=%d,vu0=%d\n",
                        s_scene.kind,(unsigned long)s_frame,s_scene.count-1,
                        (double)s_sumPhysicsTicks/divisor,
                        (double)s_sumBuildTicks/divisor,
+                       (double)s_sumShadowTicks/divisor,
+                       (double)s_sumBoxTicks/divisor,
                        (double)s_sumGsTicks/divisor,
                        (double)s_maxWorkTicks/294912.0,
                        (double)(s_sumPhysicsTicks+s_sumBuildTicks+
                                 s_sumGsTicks)/
                          (4915200.0*(double)s_perfSamples/100.0),
-                       (double)s_lastVsyncMs,b3GsGetLastGifQwords());
+                       (double)s_lastVsyncMs,b3GsGetLastGifQwords(),
+                       s_simSubsteps,s_vu0Mode);
                 s_perfSamples=0;
                 s_sumPhysicsTicks=0;
                 s_sumBuildTicks=0;
                 s_sumGsTicks=0;
+                s_sumShadowTicks=0;
+                s_sumBoxTicks=0;
                 s_maxWorkTicks=0;
             }
         }
