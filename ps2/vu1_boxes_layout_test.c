@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
+#include "vu1_memory_map.h"
 #include <string.h>
 
 typedef struct Upload {
@@ -42,6 +43,9 @@ static void check_projection(float x,float y,float z,
 }
 int main(void)
 {
+    assert(B3_VU1_EE_MICRO_BASE==0x11008000u);
+    assert(B3_VU1_EE_DATA_BASE ==0x1100C000u);
+    assert(B3_VU1_EE_MICRO_BASE != B3_VU1_EE_DATA_BASE);
     assert(sizeof(float)==4);
     // ILW loads the low 16 bits of the V4_32 control word. Sending
     // 1.0f used to read as zero, silently disabling XGKICK.

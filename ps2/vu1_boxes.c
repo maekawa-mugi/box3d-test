@@ -4,6 +4,7 @@
 // box. Microprogram transforms 8 vertices once and emits 12 triangles
 // directly to GS through GIF PATH1. PCSS always executes earlier on PATH3.
 #include "vu1_boxes.h"
+#include "vu1_memory_map.h"
 
 #include <dma.h>
 #include <gif_tags.h>
@@ -148,11 +149,15 @@ int b3Vu1BoxesInit(void)
         s_status="VU1 FAIL MPG SIZE";
         return 0;
     }
-    const volatile u32* vuCode=(const volatile u32*)VU1_MICROMEM1_START;
+    // PS2SDK's VU1_MICROMEM1_START is 0x1100C000, actually VU1
+    // DATA memory on EE/PCSX2. VU1 microcode resides at 0x11008000.
+    const volatile u32* vuCode=(const volatile u32*)B3_VU1_EE_MICRO_BASE;
     const unsigned instructionWords=(unsigned)(imageBytes/sizeof(u32));
-    printf("BOX3D_VU1_IMAGE,bytes=%lu,words=%u,boot_pc=0,transform_pc=%u,first=%08x:%08x,vif_stat=%08x,vif_err=%08x\n",
+    printf("BOX3D_VU1_IMAGE,bytes=%lu,words=%u,boot_pc=0,transform_pc=%u,micro_addr=%08x,data_addr=%08x,first=%08x:%08x,vif_stat=%08x,vif_err=%08x\n",
            (unsigned long)imageBytes,instructionWords,
-           s_mainProgramPc,(unsigned)image[0],(unsigned)image[1],
+           s_mainProgramPc,(unsigned)B3_VU1_EE_MICRO_BASE,
+           (unsigned)B3_VU1_EE_DATA_BASE,
+           (unsigned)image[0],(unsigned)image[1],
            (unsigned)VIF1_STAT,(unsigned)VIF1_ERR);
     unsigned mismatch=instructionWords;
     for(unsigned i=0;i<instructionWords;++i)
@@ -171,7 +176,7 @@ int b3Vu1BoxesInit(void)
         // through its MMIO window. VIF1 still handles all vertex
         // uploads and VU1 still executes the program. This is safe
         // only when the VIF queue is idle, as checked above.
-        volatile u32* writable=(volatile u32*)VU1_MICROMEM1_START;
+        volatile u32* writable=(volatile u32*)B3_VU1_EE_MICRO_BASE;
         for(unsigned i=0;i<instructionWords;++i)
             writable[i]=image[i];
         EE_SYNCL();
@@ -193,6 +198,7 @@ int b3Vu1BoxesInit(void)
     }
     else
         puts("BOX3D_VU1_IMAGE,mpg_dma_readback=ok");
+    puts("BOX3D_VU1_IMAGE,readback=ok");
 
     int k=0;
     for(int face=0;face<6;++face)

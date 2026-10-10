@@ -641,3 +641,49 @@ The HUD now distinguishes `VU1 READY DMA` (MPG succeeded),
 `VU1 EE SAFE`; never skip the ACK/PATH3/VIF/BOOT ARM steps.
 Test BOOT in PCSX2 only once the HUD says READY. A successful
 readback by itself does not prove that MSCAL or XGKICK works.
+
+## 2026-10-10: confirmed VU1 micro/data addresses reversed in PS2SDK
+
+PCSX2 `pcsx2/Memory.cpp` maps **VU1 instruction memory**
+at `0x11008000` and **VU1 data memory** at `0x1100C000`.
+See `glampert/quake2-ps2/src/ps2/debug/pipeline_dump.cpp`
+for independent documentation of the SDK naming inversion.
+
+The PS2SDK `vif_registers.h` macros currently say:
+
+```c
+#define VU1_MEM1_START      0x11008000
+#define VU1_MICROMEM1_START 0x1100C000
+```
+
+These names do **not** describe the physical memory map correctly.
+Our former `VU1_MICROMEM1_START` readback was inspecting DATA RAM,
+which directly explains `VU1 FAIL READBACK`. Worse, the CPU-assisted
+MPG recovery in the previous revision also wrote the expected
+instructions to that incorrect DATA RAM address.
+
+Use project-owned unambiguous constants from `vu1_memory_map.h`:
+
+```c
+#define B3_VU1_EE_MICRO_BASE 0x11008000u
+#define B3_VU1_EE_DATA_BASE  0x1100C000u
+```
+
+Both the *readback* and *CPU fallback write* now address
+`B3_VU1_EE_MICRO_BASE`, and the host layout regression test
+asserts both address constants. The diagnostic
+`BOX3D_VU1_IMAGE` line includes `micro_addr=11008000`,
+`data_addr=1100c000`, and reports
+`BOX3D_VU1_IMAGE,readback=ok` on successful verification.
+The MPG VIF1 upload and CPU fallback are each verified against
+the full program image before VU1 MSCAL is permitted.
+
+**Reboot PCSX2 with the newly built ELF.** The previous binary
+may have written into VU1 DATA RAM during attempted recovery.
+Successful microcode readback establishes only correct upload,
+not that the VU1 BOOT, vertex loop, or XGKICK now work. Keep
+D0 as the default and validate BOOT ARM before BOOT.
+
+References:
+- https://github.com/PCSX2/pcsx2/blob/master/pcsx2/Memory.cpp#L393-L403
+- https://github.com/glampert/quake2-ps2/blob/main/src/ps2/debug/pipeline_dump.cpp#L25-L28
