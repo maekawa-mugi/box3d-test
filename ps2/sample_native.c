@@ -482,6 +482,9 @@ static void render(void)
 #if defined(BOX3D_GS_RECEIVER_SHADOWS)
     for(int i=1;i<s_scene.count;++i) draw_box(&s_scene.objects[i]);
     render_receiver_shadows();
+#if defined(BOX3D_GS_KAWASE_DEBUG)
+    b3GsKawaseDebugOverlay();
+#endif
 #else
     render_shadows();
     for(int i=1;i<s_scene.count;++i) draw_box(&s_scene.objects[i]);

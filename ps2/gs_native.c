@@ -518,6 +518,44 @@ void b3GsShadowEnd(void)
                    B3_KAWASE_HALF_W,B3_KAWASE_HALF_H, 2, 2);
     // Subsequent HUD is written directly onto main color framebuffer.
 }
+
+// Diagnostic overlays deliberately bypass GS alpha/depth tests.
+// Show three actual VRAM textures side-by-side after the soft composite:
+// first full-resolution shadow mask, quarter-res ping-pong result,
+// and final half-res result. Black thumbnails mean an earlier stage
+// failed; visible thumbnails with no shadow imply final composite failure.
+#if defined(BOX3D_GS_KAWASE_DEBUG)
+static void b3GsKawasePreview(int x,int y,int targetWidth,int targetHeight,
+                              int source,int sourceWidth,int sourceHeight,
+                              int tw,int th)
+{
+    b3GsKawaseTarget(s_framebuffer[s_back],B3_PS2_GS_W,B3_PS2_GS_H);
+    b3GsAD(GS_SET_PRIM(6,0,0,0,0,0,0,0,0),GS_REG_PRIM);
+    b3GsAD(GS_SET_RGBAQ(22,30,42,128,0x3f800000),GS_REG_RGBAQ);
+    b3GsAD(b3GsXYZ(x-2,y-2),GS_REG_XYZ2);
+    b3GsAD(b3GsXYZ(x+targetWidth+2,y+targetHeight+2),GS_REG_XYZ2);
+
+    b3GsKawaseSource(source,sourceWidth,sourceHeight,tw,th);
+    b3GsAD(GS_SET_PRIM(6,0,1,0,0,0,1,0,0),GS_REG_PRIM);
+    b3GsAD(GS_SET_UV(8,8),GS_REG_UV);
+    b3GsAD(b3GsXYZ(x,y),GS_REG_XYZ2);
+    b3GsAD(GS_SET_UV((sourceWidth<<4)+8,(sourceHeight<<4)+8),GS_REG_UV);
+    b3GsAD(b3GsXYZ(x+targetWidth,y+targetHeight),GS_REG_XYZ2);
+}
+void b3GsKawaseDebugOverlay(void)
+{
+    b3GsKawasePreview(8,171,92,40,s_shadowMask,
+                      B3_PS2_GS_W,B3_PS2_GS_H,9,8);
+    b3GsKawasePreview(114,171,92,40,s_quarterMask[1],
+                      B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H,7,6);
+    b3GsKawasePreview(220,171,92,40,s_halfMask[0],
+                      B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,8,7);
+    b3GsOverlayBegin();
+    b3GsOverlayText(10,161,"RAW",252,245,223);
+    b3GsOverlayText(116,161,"QUARTER",252,245,223);
+    b3GsOverlayText(222,161,"FINAL",252,245,223);
+}
+#endif
 #else
 void b3GsShadowBegin(void)
 {

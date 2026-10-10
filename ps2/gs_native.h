@@ -29,6 +29,9 @@ void b3GsTriangle3(b3GsCamera camera, b3GsPoint3 a, b3GsPoint3 b,
 void b3GsSkyGradient(void);
 void b3GsShadowBegin(void);
 void b3GsShadowEnd(void);
+#if defined(BOX3D_GS_KAWASE_DEBUG)
+void b3GsKawaseDebugOverlay(void);
+#endif
 // Offscreen stages are active only in BOX3D_GS_KAWASE_SHADOWS.
 // The normal direct-shadow build retains its existing API/behavior.
 void b3GsOverlayBegin(void);

@@ -196,6 +196,29 @@ for symbol in main b3World_Step b3GsShadowBegin b3GsShadowEnd b3GsTriangle3 b3Gs
         die "Soft shadow sample missing: $symbol"
 done
 
+# VRAM stage-debug ELF. It shows the full-res mask, quarter-res and
+# final half-res blur in three bottom-right diagnostic viewports.
+# Leave the normal soft-shadow ELF unchanged for a clean comparison.
+SOFT_DEBUG_OUT=${SOFT_DEBUG_OUT:-$ROOT/ps2/box3d_ps2_samples_softdebug.elf}
+"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
+    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
+    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 \
+    -DBOX3D_GS_RECEIVER_SHADOWS=1 \
+    -DBOX3D_GS_KAWASE_SHADOWS=1 -DBOX3D_GS_KAWASE_DEBUG=1 \
+    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
+    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
+    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
+    "$ROOT/ps2/shadow_project.c" "$LIB" \
+    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$SOFT_DEBUG_OUT"
+"$READELF" -h "$SOFT_DEBUG_OUT" | grep -q 'Machine:.*MIPS' ||
+    die "Soft debug sample is not a MIPS ELF"
+"$READELF" -h "$SOFT_DEBUG_OUT" | grep -q 'Type:.*EXEC' ||
+    die "Soft debug sample is not executable ELF"
+for symbol in main b3GsKawaseDebugOverlay b3GsPresent b3ShadowProjectBox; do
+    "$NM" --defined-only "$SOFT_DEBUG_OUT" | grep -Eq " [Tt] ${symbol}$" ||
+        die "Soft debug sample missing: $symbol"
+done
+
 printf 'PS2 BUILD OK: %s\n' "$OUT"
 printf 'PS2 BENCH BUILD OK: %s\n' "$BENCH_OUT"
 printf 'PS2 NATIVE GS SAMPLES OK: %s\n' "$SAMPLE_OUT"
@@ -203,5 +226,6 @@ printf 'PS2 NATIVE GS SOLID SAMPLES OK: %s\n' "$SOLID_SAMPLE_OUT"
 printf 'PS2 OFFICIAL-STYLE GS SAMPLES OK: %s\n' "$OFFICIAL_SAMPLE_OUT"
 printf 'PS2 CLIPPED PROJECTED SHADOW SAMPLES OK: %s\n' "$SHADOW_SAMPLE_OUT"
 printf 'PS2 GS DUAL KAWASE SOFT SHADOW SAMPLES OK: %s\n' "$SOFT_SHADOW_OUT"
+printf 'PS2 GS SOFT SHADOW STAGE DEBUG OK: %s\n' "$SOFT_DEBUG_OUT"
 printf 'Target: %s\n' "$("$CC" -dumpmachine)"
 printf 'Run this ELF in PCSX2 or on PS2 and record BOX3D_STAGE / PASS / FAIL.\n'
