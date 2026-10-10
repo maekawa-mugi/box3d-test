@@ -62,3 +62,30 @@ static inline size_t b3Vu1BuildStaticStream(uint32_t* out,size_t capacityWords,
     out[n++]=0;
     return n;
 }
+
+/* 7 camera QWs UNPACK V4_32 at VU1 DMEM[0], with FLUSHE. */
+static inline size_t b3Vu1BuildCameraStream(uint32_t* out,
+                                           size_t capacityWords,
+                                           const void* camera)
+{
+    if(!out || !camera || capacityWords<36u)return 0;
+    out[0]=0x01000101u; // STCYCL CL=WL=1
+    out[1]=0x6c074000u; // UNSIGNED UNPACK V4_32, NUM=7, addr=0
+    memcpy(out+2,camera,7u*16u);
+    out[30]=0;out[31]=0;
+    out[32]=0x10000000u; // FLUSHE
+    out[33]=0;out[34]=0;out[35]=0;
+    return 36u; // 9 quadwords
+}
+
+/* One QW: FLUSH, MSCAL PC=0, FLUSHE, NOP. */
+static inline size_t b3Vu1BuildBootStream(uint32_t* out,
+                                         size_t capacityWords)
+{
+    if(!out || capacityWords<4u)return 0;
+    out[0]=0x11000000u;
+    out[1]=0x14000000u;
+    out[2]=0x10000000u;
+    out[3]=0;
+    return 4u;
+}

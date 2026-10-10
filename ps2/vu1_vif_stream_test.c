@@ -31,6 +31,18 @@ int main(void){
     assert(out[148]==0x01000101u && out[149]==0x6c014100u);
     for(int i=0;i<4;i++)assert(out[150+i]==tag[i]);
     assert(out[156]==0x10000000u);
-    puts("PASS: VIF1 normal DMA MPG (2..2048 instructions) and static UNPACK stream");
+    uint32_t camera[28];
+    for(unsigned i=0;i<28;i++)camera[i]=0xc0000000u+i;
+    assert(b3Vu1BuildCameraStream(out,35,camera)==0);
+    assert(b3Vu1BuildCameraStream(out,36,camera)==36);
+    assert(out[0]==0x01000101u && out[1]==0x6c074000u);
+    for(unsigned i=0;i<28;i++)assert(out[2+i]==camera[i]);
+    assert(out[30]==0 && out[31]==0 && out[32]==0x10000000u);
+    assert(out[33]==0 && out[34]==0 && out[35]==0);
+    assert(b3Vu1BuildBootStream(out,3)==0);
+    assert(b3Vu1BuildBootStream(out,4)==4);
+    assert(out[0]==0x11000000u && out[1]==0x14000000u);
+    assert(out[2]==0x10000000u && out[3]==0);
+    puts("PASS: VIF1 normal DMA MPG, static/camera UNPACK, MSCAL boot");
     return 0;
 }

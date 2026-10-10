@@ -30,6 +30,8 @@ extern u32 B3Vu1Boxes_RunStart __attribute__((section(".vudata")));
 enum { B3_VU1_VIF_QWORDS=8192, B3_VU1_CODE_WORDS=4608 };
 static _Alignas(64) uint32_t s_mpgStream[B3_VU1_CODE_WORDS];
 static _Alignas(64) uint32_t s_staticStream[160];
+static _Alignas(64) uint32_t s_cameraTestStream[36];
+static _Alignas(64) uint32_t s_bootTestStream[4];
 static packet2_t* s_vifPacket;
 static _Alignas(64) b3Vu1BoxInput s_upload[B3_VU1_MAX_BOXES];
 static _Alignas(64) float s_camera[7][4];
@@ -330,52 +332,71 @@ int b3Vu1BoxesUploadTest(b3GsCamera camera)
 {
     if(!s_ready)return 0;
     b3Vu1BoxesBegin(camera,0);
-    packet2_reset(s_vifPacket,0);
-    packet2_utils_vu_add_unpack_data(s_vifPacket,0,s_camera,7,0);
-    packet2_utils_vu_add_end_tag(s_vifPacket);
-    puts("BOX3D_VU1_PHASE,vif_only_dma_start");
-    dma_channel_send_packet2(s_vifPacket,DMA_CHANNEL_VIF1,1);
-    if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    const size_t words=b3Vu1BuildCameraStream(
+        s_cameraTestStream,36,s_camera);
+    if(words!=36u)
     {
-        puts("BOX3D_VU1_FAIL,vif_only_timeout");
+        puts("BOX3D_VU1_FAIL,vif_camera_stream_layout");
+        s_status="VU1 FAIL VIF PACK";
+        return 0;
+    }
+    // Same verified normal-DMA transport as the successful MPG upload.
+    puts("BOX3D_VU1_PHASE,vif_only_normal_dma_start");
+    if(dma_channel_send_normal(DMA_CHANNEL_VIF1,s_cameraTestStream,
+                               (int)(words/4u),0,0)<0 ||
+       dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    {
+        printf("BOX3D_VU1_FAIL,vif_only_dma_timeout,vif_stat=%08x,vif_err=%08x\n",
+               (unsigned)VIF1_STAT,(unsigned)VIF1_ERR);
         s_status="VU1 FAIL VIF DMA";
         s_ready=0;
         return 0;
     }
-    puts("BOX3D_VU1_PHASE,vif_only_dma_done");
+    printf("BOX3D_VU1_PHASE,vif_only_normal_dma_done,vif_stat=%08x,vif_err=%08x\n",
+           (unsigned)VIF1_STAT,(unsigned)VIF1_ERR);
+    s_status="VU1 VIF OK";
     return 1;
 }
 
 int b3Vu1BoxesBootTest(void)
 {
     if(!s_ready)return 0;
-    packet2_reset(s_vifPacket,0);
-    // PC=0 is an E-bit stub. Deliberately no camera/corner upload
-    // and no GIF PATH1 traffic. This tests VIF1 MSCAL/FLUSHE alone.
-    packet2_utils_vu_add_start_program(s_vifPacket,0);
-    packet2_chain_open_cnt(s_vifPacket,0,0,0);
-    packet2_vif_flushe(s_vifPacket,0);
-    packet2_vif_nop(s_vifPacket,0);
-    packet2_vif_nop(s_vifPacket,0);
-    packet2_vif_nop(s_vifPacket,0);
-    packet2_chain_close_tag(s_vifPacket);
-    packet2_utils_vu_add_end_tag(s_vifPacket);
-    printf("BOX3D_VU1_BOOT,pre_mscal,vif_stat=%08x,vif_err=%08x,vif_code=%08x,pc=0\n",
-           (unsigned)VIF1_STAT,(unsigned)VIF1_ERR,
-           (unsigned)VIF1_CODE);
-    puts("BOX3D_VU1_PHASE,boot_mscal_start");
-    dma_channel_send_packet2(s_vifPacket,DMA_CHANNEL_VIF1,1);
-    if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    // The PC=0 microprogram is the two-instruction E-bit stub.
+    // No packet2 REF/TTE DMA chain: issue one aligned normal-DMA QW.
+    const size_t words=b3Vu1BuildBootStream(s_bootTestStream,4);
+    if(words!=4u)
     {
-        printf("BOX3D_VU1_FAIL,boot_mscal_timeout,vif_stat=%08x,vif_err=%08x,vif_code=%08x\n",
+        puts("BOX3D_VU1_FAIL,boot_stream_layout");
+        s_status="VU1 FAIL BOOT PACK";
+        return 0;
+    }
+    const u32* image=&B3Vu1Boxes_CodeStart;
+    // DVP VU upper instruction E bit: bit 30.
+    if((image[1]&0x40000000u)==0)
+    {
+        printf("BOX3D_VU1_FAIL,boot_stub_e_bit_missing,upper=%08x\n",
+               (unsigned)image[1]);
+        s_status="VU1 FAIL BOOT STUB";
+        return 0;
+    }
+    printf("BOX3D_VU1_BOOT,normal_dma_pre_mscal,vif_stat=%08x,vif_err=%08x,vif_code=%08x,upper=%08x\n",
+           (unsigned)VIF1_STAT,(unsigned)VIF1_ERR,
+           (unsigned)VIF1_CODE,(unsigned)image[1]);
+    puts("BOX3D_VU1_PHASE,boot_normal_dma_start");
+    if(dma_channel_send_normal(DMA_CHANNEL_VIF1,s_bootTestStream,
+                               (int)(words/4u),0,0)<0 ||
+       dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    {
+        printf("BOX3D_VU1_FAIL,boot_normal_dma_timeout,vif_stat=%08x,vif_err=%08x,vif_code=%08x\n",
                (unsigned)VIF1_STAT,(unsigned)VIF1_ERR,
                (unsigned)VIF1_CODE);
         s_status="VU1 FAIL BOOT";
         s_ready=0;
         return 0;
     }
-    printf("BOX3D_VU1_PHASE,boot_mscal_done,vif_stat=%08x,vif_err=%08x\n",
+    printf("BOX3D_VU1_PHASE,boot_normal_dma_done,vif_stat=%08x,vif_err=%08x\n",
            (unsigned)VIF1_STAT,(unsigned)VIF1_ERR);
+    s_status="VU1 BOOT OK";
     return 1;
 }
 

@@ -803,3 +803,22 @@ A successful INIT displays `VU1 MPG UPLOADED`; VERIFY is still
 required before any MSCAL or XGKICK. If INIT again returns to BIOS,
 collect the EE stdout plus PCSX2 log to identify whether the last
 line is `mpg_normal_dma_begin` or `mpg_normal_dma_done`.
+
+## 2026-10-10: VIF and BOOT normal-DMA update
+
+The last test reached VU1 READY DMA and selected the VIF stage, then
+returned to BIOS at or after VIF. Previously, standalone VIF and BOOT
+still used packet2 REF/TTE chains. This update replaces both with the
+normal-DMA transport already shown to work for MPG upload.
+
+VIF: 7 camera quadwords, STCYCL / UNPACK V4_32 / FLUSHE. Successful
+transfer sets the HUD to `VU1 VIF OK`.
+
+BOOT: one DMA quadword of FLUSH / MSCAL(0) / FLUSHE / NOP. Checks that
+the E-bit stub exists before MSCAL. Successful transfer sets HUD to
+`VU1 BOOT OK`. No CPU writes to VU1 micro memory.
+
+The VIF/BOOT stream format has host regression coverage. These changes
+do not prove VU1 execution or XGKICK works on PCSX2. VUONLY and box
+submission still use packet2 chains and should not be tried until BOOT
+is verified. PCSX2 on-target execution is not available here.
