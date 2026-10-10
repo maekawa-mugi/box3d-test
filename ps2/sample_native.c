@@ -21,6 +21,9 @@
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #include "shadow_penumbra.h"
 #endif
+#if defined(BOX3D_PS2_UNIFIED)
+#include "shadow_group.h"
+#endif
 
 #include <kernel.h>
 #if defined(BOX3D_GS_PROGRESSIVE)
@@ -757,7 +760,148 @@ static void cornersForBody(const SceneBody* body,b3ShadowVec3 out[8])
 // Avoid repeating Box3D body transforms + convex hull/clip work for
 // every accepted box. Static EE BSS prevents large stack frames.
 static b3ShadowPolygon s_shadowProjectedCache[MAX_BOXES];
+static b3Ps2ShadowBounds s_shadowBounds[MAX_BOXES];
+static b3Ps2ShadowBounds s_shadowUnions[MAX_BOXES];
+static int s_shadowParents[MAX_BOXES];
 #endif
+#if defined(BOX3D_PS2_UNIFIED)
+// One GS subtractive composite per connected component of overlapping
+// PCSS penumbrae. Previously each radius bucket was subtracted in
+// isolation, so one silhouette produced TWO (or more) dark copies when
+// near and far radius groups touched. Union in screen space first.
+static void render_receiver_shadows(int receiver)
+{
+    const b3ShadowVec3 direction={-0.44f,-0.82f,-0.36f};
+    b3ShadowReceiver plane=makeReceiver(receiver);
+    unsigned projected=0,triangles=0;
+    int minRadius=5,maxRadius=0;
+    // Only valid projected shadows take part in the union-find.
+    for(int i=0;i<s_scene.count;++i)s_shadowBounds[i].valid=0;
+    float cameraZ=
+        (plane.origin.x-s_scene.camera.eye.x)*s_scene.camera.forward.x+
+        (plane.origin.y-s_scene.camera.eye.y)*s_scene.camera.forward.y+
+        (plane.origin.z-s_scene.camera.eye.z)*s_scene.camera.forward.z;
+    if(cameraZ<2.0f)cameraZ=2.0f;
+    float pxPerMeter=s_scene.camera.focal/cameraZ;
+
+    // Align the blur's long axis with the light projected onto the
+    // receiving plane. This is an approximation, not depth-map PCSS.
+    float dn=direction.x*plane.normal.x+
+             direction.y*plane.normal.y+
+             direction.z*plane.normal.z;
+    b3ShadowVec3 tangent={
+        direction.x-dn*plane.normal.x,
+        direction.y-dn*plane.normal.y,
+        direction.z-dn*plane.normal.z
+    };
+    b3ShadowVec3 tangentTip={
+        plane.origin.x+tangent.x,
+        plane.origin.y+tangent.y,
+        plane.origin.z+tangent.z
+    };
+    int majorX=1,ax,ay,bx,by;
+    if(b3GsProjectScreen(s_scene.camera,toPoint3(plane.origin),&ax,&ay) &&
+       b3GsProjectScreen(s_scene.camera,toPoint3(tangentTip),&bx,&by))
+    {
+        int dx=bx-ax,dy=by-ay;
+        if(dx<0)dx=-dx;
+        if(dy<0)dy=-dy;
+        majorX=(dx>=dy);
+    }
+
+    for(int caster=1;caster<s_scene.count;++caster)
+    {
+        if(caster==receiver)continue;
+        b3ShadowVec3 corners[8];
+        b3ShadowPolygon poly;
+        cornersForBody(&s_scene.objects[caster],corners);
+        if(b3ShadowProjectBox(corners,direction,&plane,&poly)<3)
+            continue;
+        s_shadowProjectedCache[caster]=poly;
+        b3Ps2ShadowBounds* b=&s_shadowBounds[caster];
+        b->valid=1;
+        ++projected;
+        float gap=1000000.0f;
+        for(int v=0;v<8;++v)
+        {
+            b3ShadowVec3 p=corners[v];
+            float d=(p.x-plane.origin.x)*plane.normal.x+
+                    (p.y-plane.origin.y)*plane.normal.y+
+                    (p.z-plane.origin.z)*plane.normal.z;
+            if(d<gap)gap=d;
+        }
+        if(gap<0.0f)gap=0.0f;
+        b->radius=(unsigned char)b3Ps2ShadowRadius(gap,pxPerMeter);
+        if(b->radius<minRadius)minRadius=b->radius;
+        if(b->radius>maxRadius)maxRadius=b->radius;
+        b->x0=B3_PS2_GS_W;b->y0=B3_PS2_GS_H;
+        b->x1=-1;b->y1=-1;
+        int allProjected=1;
+        for(int v=0;v<poly.count;++v)
+        {
+            b3ShadowVec3 point=
+                b3ShadowOnReceiver(poly.vertices[v],&plane,0.045f);
+            int x,y;
+            if(!b3GsProjectScreen(s_scene.camera,toPoint3(point),&x,&y))
+            {
+                allProjected=0;
+                break;
+            }
+            if(x<b->x0)b->x0=x;
+            if(y<b->y0)b->y0=y;
+            if(x>b->x1)b->x1=x;
+            if(y>b->y1)b->y1=y;
+        }
+        if(!allProjected)
+        {
+            // A clipped near-plane polygon is conservatively fullscreen
+            // so its filter cannot cut off at an invalid bounding box.
+            b->x0=0;b->y0=0;
+            b->x1=B3_PS2_GS_W-1;
+            b->y1=B3_PS2_GS_H-1;
+        }
+    }
+    int groups=b3Ps2ShadowGroup(s_shadowBounds,s_scene.count,
+                                s_shadowParents,s_shadowUnions);
+    for(int root=1;root<s_scene.count;++root)
+    {
+        const b3Ps2ShadowBounds* group=&s_shadowUnions[root];
+        if(!group->valid)continue;
+        // A component keeps one chosen radius (maximum of its members),
+        // so overlapping casters cannot darken the same pixel twice.
+        // Separated components still keep their individual radii.
+        b3GsShadowSetPenumbra(group->radius,
+                             group->x0,group->y0,group->x1,group->y1,
+                             majorX);
+        b3GsShadowBegin();
+        for(int caster=1;caster<s_scene.count;++caster)
+        {
+            if(s_shadowParents[caster]!=root)continue;
+            const b3ShadowPolygon* poly=&s_shadowProjectedCache[caster];
+            if(poly->count<3)continue;
+            b3GsPoint3 hull[B3_SHADOW_MAX_VERTS];
+            for(int v=0;v<poly->count;++v)
+                hull[v]=toPoint3(
+                    b3ShadowOnReceiver(poly->vertices[v],&plane,0.045f));
+            for(int t=1;t+1<poly->count;++t)
+            {
+                b3GsTriangle3(s_scene.camera,hull[0],hull[t],
+                              hull[t+1],39,48,56);
+                ++triangles;
+            }
+        }
+        b3GsShadowEnd();
+    }
+    if(s_frame%240==0)
+    {
+        printf("BOX3D_PCSS_UNION,scene=%d,receiver=%d,casters=%u,components=%d,composites=%d,radius_min=%d,radius_max=%d,major_axis=%c\n",
+               s_scene.kind,receiver,projected,groups,groups,
+               projected?minRadius:0,maxRadius,majorX?'X':'Y');
+        printf("BOX3D_SHADOW_RECEIVERS,scene=%d,receiver=%d,hulls=%u,triangles=%u\n",
+               s_scene.kind,receiver,projected,triangles);
+    }
+}
+#else
 static void render_receiver_shadows(int receiver)
 {
     unsigned emittedTriangles=0;
@@ -941,6 +1085,7 @@ static void render_receiver_shadows(int receiver)
         printf("BOX3D_SHADOW_RECEIVERS,scene=%d,receiver=%d,hulls=%u,triangles=%u\n",
                s_scene.kind,receiver,projectedHulls,emittedTriangles);
 }
+#endif
 #endif
 
 static void render_official_hud(void)
