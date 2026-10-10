@@ -9,6 +9,9 @@
 #include "box3d/box3d.h"
 #include "box3d/math_functions.h"
 #include "gs_native.h"
+#if defined(BOX3D_GS_KAWASE_SHADOWS)
+#include "ee_clock.h"
+#endif
 #if defined(BOX3D_GS_RECEIVER_SHADOWS)
 #include "shadow_project.h"
 #endif
@@ -511,8 +514,25 @@ int main(void)
             b3DestroyWorld(s_scene.world);
             scene_create((s_scene.kind+1)%SCENE_COUNT);
         }
+#if defined(BOX3D_GS_KAWASE_SHADOWS)
+        uint32_t frameStart=b3Ps2ReadCpuCycles();
+#endif
         b3World_Step(s_scene.world,1.0f/60.0f,4);
+#if defined(BOX3D_GS_KAWASE_SHADOWS)
+        uint32_t physicsEnd=b3Ps2ReadCpuCycles();
+#endif
         render();
+#if defined(BOX3D_GS_KAWASE_SHADOWS)
+        uint32_t frameEnd=b3Ps2ReadCpuCycles();
+        if(s_frame%120==0)
+        {
+            printf("BOX3D_KAWASE_FRAME,scene=%d,frame=%lu,physics_ticks=%lu,render_vsync_ticks=%lu,total_ticks=%lu,target60_ticks=4915200\n",
+                   s_scene.kind,(unsigned long)s_frame,
+                   (unsigned long)b3Ps2DeltaCpuCycles(frameStart,physicsEnd),
+                   (unsigned long)b3Ps2DeltaCpuCycles(physicsEnd,frameEnd),
+                   (unsigned long)b3Ps2DeltaCpuCycles(frameStart,frameEnd));
+        }
+#endif
         ++s_frame;
         if(s_frame%240==0)
         {

@@ -175,3 +175,58 @@ under PCSX2, unlike the earlier daylight GS visuals. Verify that
 `hulls` and `triangles` are nonzero and that the large inclined
 platform's full shadow now appears on the floor. 60fps is **not**
 assumed for this more complex edition.
+
+## Kawase-style native GS ping-pong soft shadows (experimental)
+
+The screenshots of the initial Z-buffered projected-shadow ELF show that
+some shadows are intact but others disappear (especially around tilted
+or ground-intersecting bodies). Two independent improvements were pushed:
+
+1. `shadow_project.c` now constructs the clipped above-plane box from
+   all 8 vertices **plus 12 edge-plane intersections**, before directional
+   projection. The previous code dropped below-plane vertices without
+   inserting new silhouette vertices. A penetrating-box regression was
+   added to the C17 portable shadow projector test.
+2. A separate `ps2/box3d_ps2_samples_softshadows.elf` applies a native GS
+   **Dual Kawase-style** blur to its projected, occlusion-tested shadow
+   coverage, without gsKit or shaders:
+   - After opaque rendering, draw Z-tested RGB coverage into an offscreen
+     full-res 320x224 PSMCT32 VRAM mask, ZMSK=1 (original scene depth intact).
+   - GS TEX0/TEX1 + hardware bilinear filters downsample
+     320x224 -> 160x112 -> 80x56 using independent VRAM surfaces.
+   - GS fixed-function additive RGB blending does four shifted bilinear
+     taps per pass, then upsample 80x56 -> 160x112 and refine in a
+     second 160x112 ping-pong buffer.
+   - Return to the color framebuffer; composite four filtered taps
+     with `GS_SET_ALPHA(2,0,2,1,16)`, subtracting a blurred **RGB coverage
+     map** from the already-rendered color. GS alpha does *not*
+     accumulate like RGB, so blurring RGB rather than attempting to
+     blur the alpha channel is intentional.
+   - All five offscreen buffers are disjoint, sized within 4MiB PS2
+     VRAM. Each texture read is preceded by `GS_REG_TEXFLUSH`.
+     No EE-side readback or CPU convolution.
+   - Shadow silhouettes still use the depth-tested receiver geometry,
+     so this is **not** a full shadow map, stencil volume or arbitrary
+     self-shadowing implementation.
+
+Build and compare these independently:
+```sh
+git pull --ff-only origin experiment/ps2-ee-scalar
+sh ps2/build_ee.sh
+# PCSX2:
+# ps2/box3d_ps2_samples_shadows.elf       (hard receiver shadows)
+# ps2/box3d_ps2_samples_softshadows.elf   (Kawase-style soft receiver shadows)
+```
+
+The soft ELF emits `BOX3D_KAWASE_FRAME` every 120 steps with raw EE CP0
+Count ticks for physics and render+VBlank, versus a nominal 60Hz budget
+of 4,915,200 ticks/frame. It also keeps `BOX3D_SHADOW_RECEIVERS` logs.
+The timings include emulator pacing and GIF DMA completion; they are
+not a direct GPU cycle profiler and do not prove PS2 silicon throughput.
+
+**New pipeline is untested with PS2DEV or PCSX2.** Potential bring-up
+risks include GS texture cache coherency, blend semantics, incorrect
+UV/XY sampling offsets, and blurred silhouettes bleeding a few pixels
+across depth discontinuities. Older hard-shadow / no-shadow ELFs remain
+available. PCSX2 screenshots and console timing logs are needed before
+claiming the effect renders or keeps 60fps.
