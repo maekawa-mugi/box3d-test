@@ -21,6 +21,7 @@ typedef struct b3Ps2VU0Dot4Data
 // 2: original paired VU0 dot kernels (single dots stay scalar);
 // 3: same paired mode plus preparation-stage paired dots.
 // 4: mode 3 plus shared-input fused two-dot VU0 friction calculations.
+// 5: mode 4 plus a fused normal contact impulse/update macro kernel.
 // This isolates additional scheduling/data-transfer gains from mode 2.
 // Mode 0 remains default. Change only between completed world steps.
 void b3Ps2SetVU0Enabled( int enabled );
@@ -68,3 +69,25 @@ typedef struct b3Ps2VU0SharedDotData
 
 void b3Ps2VU0SharedDot4( b3Ps2VU0SharedDotData* data );
 unsigned b3Ps2GetVU0SharedDotCount( void );
+
+// Eight float4 inputs and five float4 outputs, all 16B aligned.
+// VU0 owns intermediate bias/mass/clamp and accumulator values.
+typedef struct b3Ps2VU0NormalSolveData
+{
+    _Alignas(16) float oldImpulse[4];
+    float normalMass[4];
+    float normalSpeed[4];
+    float velocityBias[4];
+    float oldPointTotal[4];
+    float oldManifoldTotal[4];
+    float oldTwistLimit[4];
+    float leverArm[4];
+    float newImpulse[4];
+    float deltaImpulse[4];
+    float newPointTotal[4];
+    float newManifoldTotal[4];
+    float newTwistLimit[4];
+} b3Ps2VU0NormalSolveData;
+
+void b3Ps2VU0NormalSolve( b3Ps2VU0NormalSolveData* data );
+unsigned b3Ps2GetVU0NormalSolveCount( void );

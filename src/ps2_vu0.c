@@ -21,12 +21,14 @@ static int s_vu0Mode;
 static unsigned s_vu0PairCount;
 static unsigned s_vu0ExtendedPairCount;
 static unsigned s_vu0SharedDotCount;
+static unsigned s_vu0NormalSolveCount;
 
 void b3Ps2ResetVU0PairCount( void )
 {
     s_vu0PairCount = 0;
     s_vu0ExtendedPairCount = 0;
     s_vu0SharedDotCount = 0;
+    s_vu0NormalSolveCount = 0;
 }
 
 unsigned b3Ps2GetVU0PairCount( void )
@@ -51,7 +53,7 @@ unsigned b3Ps2GetVU0SharedDotCount( void )
 
 void b3Ps2SetVU0Enabled( int mode )
 {
-    s_vu0Mode = ( mode >= 0 && mode <= 4 ) ? mode : 0;
+    s_vu0Mode = ( mode >= 0 && mode <= 5 ) ? mode : 0;
 }
 
 int b3Ps2GetVU0Enabled( void )
@@ -234,6 +236,76 @@ void b3Ps2VU0SharedDot4( b3Ps2VU0SharedDotData* data )
         data->out1[i] = ((data->sharedX[i] * data->b1x[i]) +
                          (data->sharedY[i] * data->b1y[i])) +
                           data->sharedZ[i] * data->b1z[i];
+    }
+#endif
+}
+
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, oldImpulse) == 0, "normal solve oldImpulse" );
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, normalMass) == 16, "normal solve normalMass" );
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, normalSpeed) == 32, "normal solve normalSpeed" );
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, velocityBias) == 48, "normal solve velocityBias" );
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, oldPointTotal) == 64, "normal solve oldPointTotal" );
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, oldManifoldTotal) == 80, "normal solve oldManifoldTotal" );
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, oldTwistLimit) == 96, "normal solve oldTwistLimit" );
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, leverArm) == 112, "normal solve leverArm" );
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, newImpulse) == 128, "normal solve newImpulse" );
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, deltaImpulse) == 144, "normal solve deltaImpulse" );
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, newPointTotal) == 160, "normal solve newPointTotal" );
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, newManifoldTotal) == 176, "normal solve newManifoldTotal" );
+_Static_assert( offsetof(b3Ps2VU0NormalSolveData, newTwistLimit) == 192, "normal solve newTwistLimit" );
+_Static_assert( sizeof(b3Ps2VU0NormalSolveData) == 208, "normal solve size" );
+_Static_assert( _Alignof(b3Ps2VU0NormalSolveData) >= 16, "normal solve align" );
+
+unsigned b3Ps2GetVU0NormalSolveCount( void )
+{
+    return s_vu0NormalSolveCount;
+}
+
+// One four-lane normal impulse step: bias, multiply, clamping, delta,
+// point/manifold totals and twist limit, intermediates kept in VF regs.
+// All data are finite and aligned. VF0.w = 1, so synthesize a zero VF
+// with VF0-VF0 rather than using VF0 as a zero vector.
+void b3Ps2VU0NormalSolve( b3Ps2VU0NormalSolveData* data )
+{
+    ++s_vu0NormalSolveCount;
+#if defined(BOX3D_PS2) && (defined(__mips__) || defined(__mips))
+    __asm__ __volatile__(
+        "lqc2 $vf1, 0(%0)\n\t"
+        "lqc2 $vf2, 16(%0)\n\t"
+        "lqc2 $vf3, 32(%0)\n\t"
+        "lqc2 $vf4, 48(%0)\n\t"
+        "lqc2 $vf5, 64(%0)\n\t"
+        "lqc2 $vf6, 80(%0)\n\t"
+        "lqc2 $vf7, 96(%0)\n\t"
+        "lqc2 $vf8, 112(%0)\n\t"
+        "vsub.xyzw $vf10, $vf0, $vf0\n\t"
+        "vadd.xyzw $vf9, $vf3, $vf4\n\t"
+        "vmul.xyzw $vf9, $vf2, $vf9\n\t"
+        "vsub.xyzw $vf9, $vf1, $vf9\n\t"
+        "vmax.xyzw $vf9, $vf9, $vf10\n\t"
+        "vsub.xyzw $vf11, $vf9, $vf1\n\t"
+        "vadd.xyzw $vf12, $vf5, $vf9\n\t"
+        "vadd.xyzw $vf13, $vf6, $vf9\n\t"
+        "vmul.xyzw $vf14, $vf8, $vf9\n\t"
+        "vadd.xyzw $vf15, $vf7, $vf14\n\t"
+        "sqc2 $vf9, 128(%0)\n\t"
+        "sqc2 $vf11, 144(%0)\n\t"
+        "sqc2 $vf12, 160(%0)\n\t"
+        "sqc2 $vf13, 176(%0)\n\t"
+        "sqc2 $vf15, 192(%0)"
+        : : "r"(data) : "memory");
+#else
+    for (int i=0; i<4; ++i)
+    {
+        float old=data->oldImpulse[i];
+        float negative=data->normalMass[i]*(data->normalSpeed[i]+data->velocityBias[i]);
+        float raw=old-negative;
+        float next=raw>=0.0f?raw:0.0f;
+        data->newImpulse[i]=next;
+        data->deltaImpulse[i]=next-old;
+        data->newPointTotal[i]=data->oldPointTotal[i]+next;
+        data->newManifoldTotal[i]=data->oldManifoldTotal[i]+next;
+        data->newTwistLimit[i]=data->oldTwistLimit[i]+data->leverArm[i]*next;
     }
 #endif
 }
