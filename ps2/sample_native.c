@@ -24,7 +24,11 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#if defined(BOX3D_GS_PROGRESSIVE)
+#define SCENE_COUNT 7
+#else
 #define SCENE_COUNT 3
+#endif
 #if defined(BOX3D_GS_OFFICIAL)
 #define MAX_BOXES 48
 #else
@@ -170,7 +174,7 @@ static void scene_create(int kind)
         s_scene.camera=b3GsLookAt(pt(18,13,20),pt(0,4,0),195);
         puts("BOX3D_SAMPLE_SCENE,Shapes/InclinedPlane,boxes=5");
     }
-    else
+    else if(kind==2)
     {
         // Bodies / Spinning Books: rotate each thin box about a different
         // axis without gravity, matching the desktop sample.
@@ -200,6 +204,87 @@ static void scene_create(int kind)
         s_scene.camera=b3GsLookAt(pt(10,7,13),pt(0,2,0),215);
         puts("BOX3D_SAMPLE_SCENE,Bodies/SpinningBooks,books=3");
     }
+
+#if defined(BOX3D_GS_PROGRESSIVE)
+    else if(kind==3)
+    {
+        // Restitution/Varying, original sample supports selectable BOX
+        // mode. 40 bodies with restitution 0..1 and low friction.
+        add_box(0,pt(0,-1,0),pt(50,1,50),identity,noSpin,
+                0.0f,175,182,184);
+        for(int i=0;i<40;++i)
+        {
+            b3BodyDef bd=b3DefaultBodyDef();
+            bd.type=b3_dynamicBody;
+            bd.position=(b3Pos){-39.0f+2.0f*(float)i,40,0};
+            b3BodyId id=b3CreateBody(s_scene.world,&bd);
+            b3BoxHull hull=b3MakeBoxHull(0.5f,0.5f,0.5f);
+            b3ShapeDef sd=b3DefaultShapeDef();
+            sd.density=1.0f;
+            sd.baseMaterial.friction=0;
+            sd.baseMaterial.restitution=(float)i/39.0f;
+            b3CreateHullShape(id,&sd,&hull.base);
+            SceneBody* body=&s_scene.objects[s_scene.count++];
+            body->id=id;body->half=pt(0.5f,0.5f,0.5f);
+            body->r=(uint8_t)(170+i/2);
+            body->g=(uint8_t)(185-i/3);body->b=210;
+        }
+        s_scene.camera=b3GsLookAt(pt(0,55,80),pt(0,20,0),225);
+        puts("BOX3D_SAMPLE_SCENE,Restitution/Varying,boxes=40,restitution=0..1");
+    }
+    else if(kind==4)
+    {
+        // Shapes/Slide Twist: actual 20-degree static sloping platform
+        // and the dynamic cube's oriented spin from the desktop sample.
+        add_box(0,pt(0,-1,0),pt(50,1,50),identity,noSpin,
+                0.7f,175,182,184);
+        b3Quat tilt=b3MakeQuatFromAxisAngle((b3Vec3){1,0,0},
+                                            20.0f*0.01745329252f);
+        add_box(0,pt(0,4,0),pt(10,0.5f,10),tilt,noSpin,
+                0.6f,161,170,181);
+        b3Vec3 spin=b3RotateVector(tilt,(b3Vec3){0,25,0});
+        add_box(1,pt(0,5,0),pt(1,0.5f,1),tilt,spin,
+                0.3f,200,165,142);
+        s_scene.camera=b3GsLookAt(pt(-12,13,25),pt(0,5,0),215);
+        puts("BOX3D_SAMPLE_SCENE,Shapes/SlideTwist,boxes=1");
+    }
+    else if(kind==5)
+    {
+        // Shapes/Conveyor Belt: actual static shape tangent velocity.
+        add_box(0,pt(0,-1,0),pt(20,1,20),identity,noSpin,
+                0.7f,175,182,184);
+        b3BodyDef bd=b3DefaultBodyDef();
+        bd.position=(b3Pos){-5,5,0};
+        bd.rotation=b3MakeQuatFromAxisAngle((b3Vec3){0,1,0},0.2f);
+        b3BodyId platform=b3CreateBody(s_scene.world,&bd);
+        b3ShapeDef material=b3DefaultShapeDef();
+        material.baseMaterial.friction=0.8f;
+        material.baseMaterial.tangentVelocity=(b3Vec3){2,0,0};
+        b3BoxHull hull=b3MakeBoxHull(10,0.25f,2);
+        b3CreateHullShape(platform,&material,&hull.base);
+        SceneBody* support=&s_scene.objects[s_scene.count++];
+        support->id=platform;support->half=pt(10,0.25f,2);
+        support->r=165;support->g=172;support->b=192;
+        for(int i=0;i<5;++i)
+            add_box(1,pt(-10.0f+2.0f*(float)i,7,0),
+                    pt(0.5f,0.5f,0.5f),identity,noSpin,
+                    0.8f,197,178,152);
+        s_scene.camera=b3GsLookAt(pt(0,16,35),pt(-3,3,0),235);
+        puts("BOX3D_SAMPLE_SCENE,Shapes/ConveyorBelt,boxes=5");
+    }
+    else if(kind==6)
+    {
+        // World/Far Stack, default floating-point origin preset.
+        add_box(0,pt(0,-1,0),pt(12,1,12),identity,noSpin,
+                0.7f,175,182,184);
+        for(int i=0;i<6;++i)
+            add_box(1,pt((i&1)?0.02f:-0.02f,0.5f+(float)i,0),
+                    pt(0.5f,0.5f,0.5f),identity,noSpin,
+                    0.7f,182,194,215);
+        s_scene.camera=b3GsLookAt(pt(0,9,16),pt(0,2,0),225);
+        puts("BOX3D_SAMPLE_SCENE,World/FarStack,column=6,offset_km=0");
+    }
+#endif
 #if defined(BOX3D_GS_PROGRESSIVE)
     // Desktop sample cameras use 320x224 reference focal parameters.
     // Double focal length on the high-res display to preserve FOV.
@@ -543,7 +628,13 @@ static void render_receiver_shadows(int receiver)
 
 static void render_official_hud(void)
 {
+#if defined(BOX3D_GS_PROGRESSIVE)
+    const char* sceneNames[]={"BOX STACK","INCLINED PLANE",
+                             "SPINNING BOOKS","RESTITUTION",
+                             "SLIDE TWIST","CONVEYOR BELT","FAR STACK"};
+#else
     const char* sceneNames[]={"BOX STACK","INCLINED PLANE","SPINNING BOOKS"};
+#endif
     // A restrained top-left scene panel approximating ImGui sample
     // information, but all glyph pixels are native GS sprites.
     b3GsOverlayBegin();
@@ -608,9 +699,13 @@ static void render(void)
     // 4. dynamics are drawn last and occlude their own floor shadows.
     render_receiver_shadows(0);
     int firstDynamic=1;
-    if(s_scene.kind==1)
+    if(s_scene.kind==1
+#if defined(BOX3D_GS_PROGRESSIVE)
+       ||s_scene.kind==4||s_scene.kind==5
+#endif
+      )
     {
-        draw_box(&s_scene.objects[1]); // static inclined plane
+        draw_box(&s_scene.objects[1]); // static inclined plane / platform
         render_receiver_shadows(1);
         firstDynamic=2;
     }
