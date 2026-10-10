@@ -19,7 +19,8 @@ PS2SDK debug screen and terminal-output strategy as
 
 ```sh
 sh ps2/build_ee.sh
-# Expected: ps2/box3d_ps2_smoke.elf and ps2/box3d_ps2_bench.elf
+# Expected: ps2/box3d_ps2_smoke.elf, ps2/box3d_ps2_bench.elf
+#           and ps2/box3d_ps2_samples.elf
 ```
 
 The shell build validates that the result is a MIPS executable with both the
@@ -350,3 +351,46 @@ loop and initial/final COP2 transfers *are*. A vector-add-only
 probe is not the same as peak VU0 fused multiply-add throughput.
 The point is to isolate pipeline utilization from the costly
 per-constraint `LQC2/SQC2` and control-path work in Box3D.
+
+## First visual samples, with native GS/GIF and no gsKit
+
+`sh ps2/build_ee.sh` now produces `ps2/box3d_ps2_samples.elf` in
+addition to the existing scalar correctness and VU0 benchmark ELFs.
+
+**GS implementation:** `ps2/gs_native.c` uses PS2SDK's `graph` solely
+to configure the CRT and the two display framebuffers, and PS2SDK's
+`dma` only to send a cache-flushed DMA channel-2 transfer. **Every
+drawing operation is encoded directly as raw GS A+D register writes
+inside a packed GIF tag.** It configures FRAME_1, XYOFFSET_1,
+SCISSOR_1, TEST_1, PRIM, RGBAQ, XYZ2 and FINISH, then waits for the
+GS FINISH bit and VBlank before swapping display buffers. The
+320x224x32bpp scene displays pure untextured wireframes with no z-buffer,
+Sokol/ImGui, gsKit, libdraw, libpad or libfont dependencies.
+
+The ELF uses the actual positions/rotations from the Box3D world and
+a lightweight EE-side perspective projection, not precomputed animations.
+It switches scenes automatically every 600 frames (50/60Hz display
+depending on the console's NTSC/PAL region, physics fixed at 60Hz):
+
+1. **Stacking / Box Stack**, adapted from `samples/sample_stacking.cpp`.
+   Twelve of the desktop sample's forty dynamic 1m cubes over ground.
+2. **Shapes / Inclined Plane**, adapted from `samples/sample_shapes.cpp`.
+   Five dynamic cubes with varying friction on a tilted static box.
+3. **Bodies / Spinning Books**, adapted from `samples/sample_bodies.cpp`.
+   Three non-gravity thin rotating bodies, each spinning about a
+   different axis.
+
+All share one EE worker and the scalar physics backend (VU0 is disabled
+by default). The samples periodically write `BOX3D_SAMPLE_SCENE` and
+`BOX3D_SAMPLE_FRAME` telemetry to PS2SDK stdout. No controller input
+yet: the sample list cycles for bring-up without pad or IOP modules.
+
+The next goal after confirming GIF+GS output in PCSX2 is filled faces,
+Z buffering, controller-driven sample selection and then the rest of
+the upstream sample suite. This is a **first visual port**, not an
+attempt to compile the original host-side C++/Sokol/ImGui application.
+
+**Verification status:** unlike the previous scalar/VU0 PCSX2 smoke
+screenshots, the new GS ELF has not yet been crosslinked or executed
+on PCSX2/hardware in this environment. Do not treat an ELF header
+check as proof that GS initialization or frame submission works.

@@ -94,7 +94,26 @@ for symbol in main b3World_Step b3Ps2ClearBytes b3Ps2OrWords b3Ps2SetMMIEnabled 
         die "Benchmark missing linked symbol: $symbol"
 done
 
+# Native GS 3D wireframe sample runner: draw directly through GIF A+D + DMA.
+# graph is used only for CRT/display framebuffer, NOT for drawing; no gsKit.
+SAMPLE_OUT=${SAMPLE_OUT:-$ROOT/ps2/box3d_ps2_samples.elf}
+"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
+    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
+    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
+    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
+    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" "$LIB" \
+    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$SAMPLE_OUT"
+"$READELF" -h "$SAMPLE_OUT" | grep -q 'Machine:.*MIPS' ||
+    die "Native GS sample is not a MIPS ELF"
+"$READELF" -h "$SAMPLE_OUT" | grep -q 'Type:.*EXEC' ||
+    die "Native GS sample is not an executable ELF"
+for symbol in main b3World_Step b3Body_GetPosition b3Body_GetRotation b3GsBegin b3GsLine3 b3GsPresent; do
+    "$NM" --defined-only "$SAMPLE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
+        die "Native GS sample missing linked symbol: $symbol"
+done
+
 printf 'PS2 BUILD OK: %s\n' "$OUT"
 printf 'PS2 BENCH BUILD OK: %s\n' "$BENCH_OUT"
+printf 'PS2 NATIVE GS SAMPLES OK: %s\n' "$SAMPLE_OUT"
 printf 'Target: %s\n' "$("$CC" -dumpmachine)"
 printf 'Run this ELF in PCSX2 or on PS2 and record BOX3D_STAGE / PASS / FAIL.\n'
