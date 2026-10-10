@@ -28,6 +28,14 @@ typedef struct BenchResult
     uint32_t slowSamples;
     int cleanupOk;
     unsigned pairCalls;
+    // Box3D's own nested profile: sum across all measured steps, in ms.
+    // Read outside the externally timed b3World_Step call, so accessor
+    // overhead does not contaminate the Count delta.
+    double profileStepMs;
+    double profilePairsMs;
+    double profileCollideMs;
+    double profileSolveMs;
+    double profileSensorsMs;
 } BenchResult;
 
 static void screen_line( const char* line )
@@ -186,7 +194,16 @@ static BenchResult run_physics( int mode, int vu0Mode, int side, int layers )
     {
         uint32_t start = b3Ps2ReadCpuCycles();
         b3World_Step( world, 1.0f / 60.0f, 4 );
-        uint32_t delta = b3Ps2DeltaCpuCycles( start, b3Ps2ReadCpuCycles() );
+        uint32_t end = b3Ps2ReadCpuCycles();
+        // Already instrumented by Box3D. Its timer probes are present in
+        // both scalar and VU0 trials, keeping the comparison symmetric.
+        b3Profile profile = b3World_GetProfile( world );
+        result.profileStepMs += profile.step;
+        result.profilePairsMs += profile.pairs;
+        result.profileCollideMs += profile.collide;
+        result.profileSolveMs += profile.solve;
+        result.profileSensorsMs += profile.sensors;
+        uint32_t delta = b3Ps2DeltaCpuCycles( start, end );
         if ( delta >= UINT32_C(0x80000000) )
         {
             result.slowSamples += 1;
@@ -521,6 +538,9 @@ static void vu0_scene_benchmark( const char* label, int side, int layers, int ta
         printf( "BOX3D_VU0_SCENE,%s,repeat=%d,vu0=%d,ticks=%llu,pairs=%u,y=%.7f,pos=%.7f,vel=%.7f\n",
                 label,i,modes[i],(unsigned long long)runs[i].ticks,runs[i].pairCalls,
                 runs[i].firstY,runs[i].positionSum,runs[i].velocitySum );
+        printf( "BOX3D_VU0_PHASE,%s,repeat=%d,vu0=%d,step_ms=%.4f,pairs_ms=%.4f,collide_ms=%.4f,solve_ms=%.4f,sensors_ms=%.4f\n",
+                label,i,modes[i],runs[i].profileStepMs,runs[i].profilePairsMs,
+                runs[i].profileCollideMs,runs[i].profileSolveMs,runs[i].profileSensorsMs );
         if ( modes[i] == 2 && runs[i].pairCalls == 0 )
         {
             screen_stop( "VU0 paired backend unused in physics" );
@@ -548,6 +568,21 @@ static void vu0_scene_benchmark( const char* label, int side, int layers, int ta
     screen_line( display );
     printf( "BOX3D_VU0_SUMMARY,%s,scalar_ticks=%llu,vu0_ticks=%llu,ratio=%.5f,correct=1\n",
             label,(unsigned long long)baseline,(unsigned long long)vu0,ratio );
+
+    // Phase averages are averaged over two scalar trials and two VU0
+    // trials. Separate pairs/collide/solve from total step time to decide
+    // which part of the pipeline is worth optimizing next.
+    const double scalarPairs = 0.5 * (runs[0].profilePairsMs + runs[3].profilePairsMs) / BENCH_STEPS;
+    const double scalarCollide = 0.5 * (runs[0].profileCollideMs + runs[3].profileCollideMs) / BENCH_STEPS;
+    const double scalarSolve = 0.5 * (runs[0].profileSolveMs + runs[3].profileSolveMs) / BENCH_STEPS;
+    const double vu0Pairs = 0.5 * (runs[1].profilePairsMs + runs[2].profilePairsMs) / BENCH_STEPS;
+    const double vu0Collide = 0.5 * (runs[1].profileCollideMs + runs[2].profileCollideMs) / BENCH_STEPS;
+    const double vu0Solve = 0.5 * (runs[1].profileSolveMs + runs[2].profileSolveMs) / BENCH_STEPS;
+    printf( "BOX3D_VU0_PHASE_SUMMARY,%s,mode=%d,scalar_pairs_ms=%.5f,vu0_pairs_ms=%.5f,scalar_collide_ms=%.5f,vu0_collide_ms=%.5f,scalar_solve_ms=%.5f,vu0_solve_ms=%.5f\n",
+            label,targetMode,scalarPairs,vu0Pairs,scalarCollide,vu0Collide,scalarSolve,vu0Solve );
+    snprintf( display,sizeof(display),"Phase ms: P %.2f/%.2f C %.2f/%.2f S %.2f/%.2f",
+              scalarPairs,vu0Pairs,scalarCollide,vu0Collide,scalarSolve,vu0Solve );
+    screen_line( display );
 }
 
 int main( void )

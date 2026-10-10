@@ -207,3 +207,21 @@ Further optimization needs contact-solver data-flow batching so that many
 operations stay in VF registers instead of paying LQC2/SQC2 transfers
 for each temporary. A batch microbenchmark alone does not speed up
 `b3World_Step`. Raw PCSX2 counts are not real PS2 hardware timing.
+
+## Profiling the actual physics pipeline
+
+`BOX3D_VU0_PHASE` and `BOX3D_VU0_PHASE_SUMMARY` are emitted for the
+single-dot (mode 1) and paired-dot (mode 2) A/B scenes. They sample Box3D's
+existing `b3World_GetProfile` **after** the measured `b3World_Step`,
+so accessor overhead is excluded from outer CP0 timing. Each phase's
+`*_ms` field is an average per step in nominal EE milliseconds, while the
+original `BOX3D_VU0_SUMMARY` remains raw 294.912MHz Count ticks.
+The on-screen `Phase ms: P/C/S` line reports *scalar/VU0* pairs,
+narrowphase collide and solver timings.
+
+A paired mode that doesn't execute any actual pair kernels now fails
+explicitly (`pairs=0`), avoiding misleading "speedups" from unused
+microbenchmarks. Inspect the `BOX3D_VU0_SCENE` call counts before
+changing more VF instructions. The earlier four-record microbenchmark is
+a standalone throughput test that does **not** imply that these grouped
+operations are used by the live physics solver.
