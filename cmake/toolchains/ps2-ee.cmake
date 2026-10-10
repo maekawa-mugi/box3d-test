@@ -19,3 +19,7 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+
+// Match the R5900 baseline flags of ps2-libc-arena, including its
+// conservative delay-slot scheduling for early EE branch-loop errata.
+set(CMAKE_C_FLAGS_INIT "-march=r5900 -G0 -fno-delayed-branch -fno-lto")
