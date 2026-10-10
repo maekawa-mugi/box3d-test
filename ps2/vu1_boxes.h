@@ -21,6 +21,8 @@ void b3Vu1BoxesBegin(b3GsCamera camera,int emitToGs);
 // Execute a VIF1 UNPACK only, without MSCAL, VU1, or XGKICK.
 // Diagnostic returns 1 on DMA completion, 0 on failure.
 int b3Vu1BoxesUploadTest(b3GsCamera camera);
+// Execute a trivial VU1 microprogram ending immediately, no XGKICK.
+int b3Vu1BoxesBootTest(void);
 int b3Vu1BoxesAdd(const b3GsPoint3 corners[8],
                   const uint8_t colors[6][3]);
 // Called only after b3GsFlushForVu1 has completed PATH3.

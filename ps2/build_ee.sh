@@ -74,8 +74,10 @@ for symbol in main b3World_Step b3GsPresent b3GsShadowSetPenumbra b3ShadowProjec
     "$NM" --defined-only "$OUT" | grep -Eq " [Tt] ${symbol}$" ||
         die "Unified ELF missing symbol: $symbol"
 done
-"$NM" --defined-only "$OUT" | grep -Eq ' [TtDd] B3Vu1Boxes_CodeStart$' ||
-    die "Unified ELF missing actual VU1 microprogram symbol"
+for micro_symbol in B3Vu1Boxes_CodeStart B3Vu1Boxes_RunStart; do
+    "$NM" --defined-only "$OUT" | grep -Eq " [TtDd] ${micro_symbol}$" ||
+        die "Unified ELF missing VU1 microprogram symbol: $micro_symbol"
+done
 printf 'BOX3D PS2 UNIFIED OK: %s\n' "$OUT"
 printf 'VIDEO: 640x480p | SHADOW: PCSS | GEOMETRY: VU1 microcode + VIF1 DMA (stress, toggle TRIANGLE)\n'
 printf 'Stale box3d_ps2_samples_*.elf files may exist from older builds; do not load them.\n'

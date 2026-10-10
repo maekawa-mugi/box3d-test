@@ -9,7 +9,14 @@
         .align 4
         .global B3Vu1Boxes_CodeStart
         .global B3Vu1Boxes_CodeEnd
+        .global B3Vu1Boxes_RunStart
 B3Vu1Boxes_CodeStart:
+; VU1 program PC=0: minimal MSCAL/FLUSHE sanity check. This must
+; return without touching DMEM, GIF, or the perspective-division unit.
+; Exactly two 64-bit instructions precede the real transform entry.
+        NOP[E]                             NOP
+        NOP                                NOP
+B3Vu1Boxes_RunStart:
         NOP                                lq          VF01,0(VI00)
         NOP                                lq          VF02,1(VI00)
         NOP                                lq          VF03,2(VI00)
@@ -37,7 +44,7 @@ vu1_vertex_loop:
         NOP                                NOP
         NOP                                NOP
         NOP                                NOP
-        NOP                                NOP
+        NOP                                waitq
         mulq.w     VF06,VF00,Q             NOP
         mulq.xy    VF05,VF05,Q             NOP
         mul.xy     VF05,VF05,VF07          NOP

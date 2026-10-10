@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 typedef struct Upload {
     _Alignas(16) float vertices[8][4];
@@ -42,6 +43,16 @@ static void check_projection(float x,float y,float z,
 int main(void)
 {
     assert(sizeof(float)==4);
+    // ILW loads the low 16 bits of the V4_32 control word. Sending
+    // 1.0f used to read as zero, silently disabling XGKICK.
+    float control=0.0f;
+    uint32_t enabled=1u, bits=0u;
+    memcpy(&control,&enabled,sizeof(enabled));
+    memcpy(&bits,&control,sizeof(bits));
+    assert((bits&0xffffu)==1u);
+    float wrong=1.0f;
+    memcpy(&bits,&wrong,sizeof(bits));
+    assert((bits&0xffffu)==0u);
     check_projection(0,0,10,600,640,480);
     check_projection(-4.1f,2.9f,24.4f,600,640,480);
     check_projection(8.4f,-4.3f,85.1f,600,640,480);

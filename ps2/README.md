@@ -519,3 +519,31 @@ PCSX2 console. The VU-only mode selects `VIF_FLUSHE`, not `FLUSHA`,
 because there is no GIF PATH1 output to drain. This is a diagnostic
 change, not evidence that VU1 drawing now works. Stop at the first
 stage that freezes and report the last `BOX3D_VU1_PHASE` message.
+
+## 2026-10-10: VU1-only hang isolated beyond VIF1
+
+The user's PCSX2 run passes the `VU1 VIF` stage (camera UNPACK),
+then blacks out at the immediately following `VU1 VUONLY` stage.
+Thus a VIF1 DMA-only upload is not the failing step. The failure is
+triggered when VU1 microcode is started, or when VIF waits for it.
+
+The VU1 binary now starts with a **two-instruction early-termination
+stub** at micro PC=0; the real projection entry is micro PC=2. A new
+`VU1 BOOT` mode tests VIF MSCAL to PC=0 followed by FLUSHE, with no
+dynamic vertices and no XGKICK. This distinguishes a bad VIF MSCAL,
+microcode upload, or VU1 termination from the actual vertex/triangle
+math program. The original projection code uses the symbol-derived
+PC=2 and an explicit WAITQ on perspective DIV.
+
+One correctness bug was also fixed: the XGKICK enable word was sent
+as the float `1.0f` (bit representation `0x3f800000`) and read with
+VU `ILW`, which observes only the low 16 bits (zero). The code now
+uploads the integer bits `0x00000001` via memcpy, so an eventual D1
+run genuinely enables XGKICK. This bug alone does **not** explain
+the earlier VUONLY hang, so it is not claimed as a black-screen fix.
+
+Revised TRIANGLE stages on stress scenes:
+`D0 -> ACK -> PATH3 -> VIF -> BOOT -> VUONLY -> D1 -> D8 -> D400`.
+Stop at the first failure and check the last
+`BOX3D_VU1_PHASE` line. The initial D0 EE renderer and PCSS are
+unchanged. Hardware/PCSX2 validation is still pending.

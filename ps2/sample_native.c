@@ -99,8 +99,8 @@ static int s_vu0Mode=0;
 static int s_shadowVisualMode=0; // 0=PCSS,1=PCF,2=HARD,3=OFF,4=LEGACY
 static int s_vu1Ready;
 // Default to proven EE geometry after a reported VU1 black-screen hang.
-// TRIANGLE stages: EE -> ACK (HUD only) -> PATH3 flush ->
-// VIF1 UNPACK only -> DT VU1 without XGKICK -> D1 -> D8 -> D400.
+// TRIANGLE stages: EE -> ACK -> PATH3 -> VIF UNPACK -> MSCAL
+// no-op -> VU1 transform without XGKICK -> D1 -> D8 -> D400.
 static int s_vu1Budget=0;
 static unsigned s_trianglePressCount;
 static int s_lastVu1Boxes;
@@ -159,7 +159,8 @@ static int pad_nav_poll(void)
         s_vu1Budget=(s_vu1Budget==0)?-2:
                     (s_vu1Budget==-2)?-3:
                     (s_vu1Budget==-3)?-4:
-                    (s_vu1Budget==-4)?-1:
+                    (s_vu1Budget==-4)?-5:
+                    (s_vu1Budget==-5)?-1:
                     (s_vu1Budget==-1)?1:
                     (s_vu1Budget==1)?8:
                     (s_vu1Budget==8)?B3_VU1_MAX_BOXES:0;
@@ -1295,7 +1296,8 @@ static void render_official_hud(void)
     const int vuMode=(s_vu1Ready && s_scene.kind>=8)?
                       s_vu1Budget:0;
     static const char* const vuStageLabel[]={
-        "VU1 ACK","VU1 PATH3","VU1 VIF","VU1 VUONLY"
+        "VU1 ACK","VU1 PATH3","VU1 VIF","VU1 BOOT",
+        "VU1 VUONLY"
     };
     if(vuMode<0)
         snprintf(page,sizeof(page),"PAGE %d/%d PCSS S%d TEST",
@@ -1338,7 +1340,8 @@ static void render_official_hud(void)
     if(vuMode==-2)b3GsOverlayText(390,82,vuStageLabel[0],255,238,132);
     else if(vuMode==-3)b3GsOverlayText(390,82,vuStageLabel[1],255,238,132);
     else if(vuMode==-4)b3GsOverlayText(390,82,vuStageLabel[2],255,238,132);
-    else if(vuMode==-1)b3GsOverlayText(390,82,vuStageLabel[3],255,238,132);
+    else if(vuMode==-5)b3GsOverlayText(390,82,vuStageLabel[3],255,238,132);
+    else if(vuMode==-1)b3GsOverlayText(390,82,vuStageLabel[4],255,238,132);
     else if(vuMode>0)
     {
         char modeInfo[24];
@@ -1535,7 +1538,8 @@ static void render(void)
     // Isolate the PATH3 finishing barrier from VIF1 UNPACK and MSCAL.
     // These two stages send no VU1 geometry and keep EE boxes visible.
     if(s_scene.kind>=8 && s_vu1Ready &&
-       (s_vu1Budget==-3 || s_vu1Budget==-4))
+       (s_vu1Budget==-3 || s_vu1Budget==-4 ||
+        s_vu1Budget==-5))
     {
         if(s_frame<2)
             printf("BOX3D_VU1_PHASE,before_test_path3,mode=%d\n",
@@ -1546,6 +1550,11 @@ static void render(void)
             if(s_vu1Budget==-4 && !b3Vu1BoxesUploadTest(s_scene.camera))
             {
                 puts("BOX3D_VU1_DISABLED,vif_only_failed");
+                s_vu1Budget=0;
+            }
+            if(s_vu1Budget==-5 && !b3Vu1BoxesBootTest())
+            {
+                puts("BOX3D_VU1_DISABLED,boot_mscal_failed");
                 s_vu1Budget=0;
             }
         }
@@ -1588,7 +1597,7 @@ int main(void)
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
 #if defined(BOX3D_PS2_UNIFIED)
-    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off_legacy,TRIANGLE=vu1_ee_ack_path3_vif_vu_1_8_all");
+    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off_legacy,TRIANGLE=vu1_ee_ack_path3_vif_boot_vu_1_8_all");
 #endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
@@ -1617,7 +1626,7 @@ int main(void)
 #if defined(BOX3D_PS2_UNIFIED)
     s_vu1Ready=b3Vu1BoxesInit();
     if(!s_vu1Ready)puts("BOX3D_VU1_FALLBACK,reason=init");
-    puts("BOX3D_VU1_SAFE_DEFAULT,ee_geometry=1,triangle=ack_path3_vif_vu_kick");
+    puts("BOX3D_VU1_SAFE_DEFAULT,ee_geometry=1,triangle=ack_path3_vif_boot_vu_kick");
 #endif
 #if defined(BOX3D_PS2_PAD_NAV)
     pad_nav_init();

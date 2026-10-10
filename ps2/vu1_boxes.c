@@ -15,12 +15,14 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
 
 // PS2SDK packet2_vif_add_micro_program expects u32* exactly.
 // The R5900 toolchain typedefs uint32_t as unsigned long and u32 as
 // unsigned int, so use the SDK type for DVP link symbols.
 extern u32 B3Vu1Boxes_CodeStart __attribute__((section(".vudata")));
 extern u32 B3Vu1Boxes_CodeEnd __attribute__((section(".vudata")));
+extern u32 B3Vu1Boxes_RunStart __attribute__((section(".vudata")));
 
 enum { B3_VU1_VIF_QWORDS=8192, B3_VU1_CODE_QWORDS=256 };
 static packet2_t* s_vifPacket;
@@ -32,6 +34,7 @@ static b3GsCamera s_currentCamera;
 static int s_count;
 static int s_ready;
 static int s_emitToGs;
+static unsigned s_mainProgramPc;
 static unsigned s_submissionCount;
 // PS2SDK dma_channel_wait(timeout=0) never terminates on a stalled VIF.
 // The finite timeout is an emergency diagnostic, not a hardware recovery.
@@ -58,6 +61,18 @@ int b3Vu1BoxesInit(void)
     };
     s_ready=0;
     s_count=0;
+    // VU1 microprogram has a two-instruction E-bit boot stub at PC=0,
+    // followed by the full transform code. Compute the latter's PC
+    // from DVP linker symbols, rather than assuming assembly layout.
+    uintptr_t start=(uintptr_t)&B3Vu1Boxes_CodeStart;
+    uintptr_t main=(uintptr_t)&B3Vu1Boxes_RunStart;
+    if(main<start || (main-start)!=16u)
+    {
+        printf("BOX3D_VU1_FAIL,entry_alignment,delta=%lu\n",
+               (unsigned long)(main-start));
+        return 0;
+    }
+    s_mainProgramPc=(unsigned)((main-start)/8u);
     // The PS2SDK VU1 example uses the same VIF1+packet2 APIs.
     if(dma_channel_initialize(DMA_CHANNEL_VIF1,NULL,0)<0)
     {
@@ -154,9 +169,11 @@ void b3Vu1BoxesBegin(b3GsCamera c,int emitToGs)
     s_camera[5][1]=(2048.0f+B3_PS2_GS_H*0.5f)*16.0f;
     s_camera[5][2]=-30000.0f/220.0f;
     s_camera[5][3]=0.0f;
-    // VU1 control word in DMEM[6].x. Value is only compared with
-    // integer zero after ILW, so 0.0f and 1.0f are both suitable.
-    s_camera[6][0]=emitToGs?1.0f:0.0f;
+    // IMPORTANT: ILW reads the low 16 integer bits, NOT a C float.
+    // 1.0f is 0x3f800000, whose low 16 bits are zero! Previous code
+    // accidentally skipped XGKICK even in D1. Send exact integer 1.
+    const u32 kick=emitToGs?1u:0u;
+    memcpy(&s_camera[6][0],&kick,sizeof(kick));
     s_camera[6][1]=0.0f;
     s_camera[6][2]=0.0f;
     s_camera[6][3]=0.0f;
@@ -229,6 +246,32 @@ int b3Vu1BoxesUploadTest(b3GsCamera camera)
     return 1;
 }
 
+int b3Vu1BoxesBootTest(void)
+{
+    if(!s_ready)return 0;
+    packet2_reset(s_vifPacket,0);
+    // PC=0 is an E-bit stub. Deliberately no camera/corner upload
+    // and no GIF PATH1 traffic. This tests VIF1 MSCAL/FLUSHE alone.
+    packet2_utils_vu_add_start_program(s_vifPacket,0);
+    packet2_chain_open_cnt(s_vifPacket,0,0,0);
+    packet2_vif_flushe(s_vifPacket,0);
+    packet2_vif_nop(s_vifPacket,0);
+    packet2_vif_nop(s_vifPacket,0);
+    packet2_vif_nop(s_vifPacket,0);
+    packet2_chain_close_tag(s_vifPacket);
+    packet2_utils_vu_add_end_tag(s_vifPacket);
+    puts("BOX3D_VU1_PHASE,boot_mscal_start");
+    dma_channel_send_packet2(s_vifPacket,DMA_CHANNEL_VIF1,1);
+    if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    {
+        puts("BOX3D_VU1_FAIL,boot_mscal_timeout");
+        s_ready=0;
+        return 0;
+    }
+    puts("BOX3D_VU1_PHASE,boot_mscal_done");
+    return 1;
+}
+
 int b3Vu1BoxesSubmit(void)
 {
     if(!s_ready || s_count==0)return 0;
@@ -243,7 +286,7 @@ int b3Vu1BoxesSubmit(void)
                                          s_upload[i].colors,6,0);
         // FLUSH+MSCAL ensures input for the next box cannot overwrite
         // VU1 DMEM while the previous microprogram is still running.
-        packet2_utils_vu_add_start_program(s_vifPacket,0);
+        packet2_utils_vu_add_start_program(s_vifPacket,s_mainProgramPc);
         // Single output GIF buffer in VU1 DMEM. FLUSHA MUST wait
         // for XGKICK/PATH1 to finish before a following MSCAL writes
         // the same 256..328 output qwords. This barrier lives on VIF1,
