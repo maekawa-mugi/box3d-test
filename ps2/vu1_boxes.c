@@ -35,6 +35,7 @@ static _Alignas(64) uint64_t s_gifTag[2];
 static b3GsCamera s_currentCamera;
 static int s_count;
 static int s_ready;
+static int s_microUploaded;
 static const char* s_status="VU1 NOT INIT";
 const char* b3Vu1BoxesStatus(void) {return s_status;}
 static int s_emitToGs;
@@ -64,6 +65,7 @@ int b3Vu1BoxesInit(void)
         {1,3,7,5},{0,1,5,4},{2,6,7,3}
     };
     s_ready=0;
+    s_microUploaded=0;
     s_status="VU1 INIT";
     s_count=0;
     // VU1 microprogram has a two-instruction E-bit boot stub at PC=0,
@@ -122,6 +124,57 @@ int b3Vu1BoxesInit(void)
         return 0;
     }
 
+    int k=0;
+    for(int face=0;face<6;++face)
+    {
+        const unsigned char* q=faces[face];
+        const int v[6]={q[0],q[1],q[2],q[0],q[2],q[3]};
+        for(int j=0;j<6;++j)
+        {
+            s_indices[k][0]=(uint32_t)v[j];
+            s_indices[k][1]=(uint32_t)face;
+            s_indices[k][2]=0;
+            s_indices[k][3]=0;
+            ++k;
+        }
+    }
+    // GIF PACKED RGBAQ + XYZ2. Packed XYZ2 accepts a float4 storing
+    // 32-bit integer X,Y,Z in x,y,z. Low 16 bits of XY are GS 12.4,
+    // Z is a 32-bit integer (the scene framebuffer uses PSMZ16).
+    s_gifTag[0]=GIF_SET_TAG(36,1,1,3,GIF_FLG_PACKED,2);
+    s_gifTag[1]=(uint64_t)GIF_REG_RGBAQ |
+                ((uint64_t)GIF_REG_XYZ2<<4);
+    packet2_reset(s_vifPacket,0);
+    packet2_utils_vu_add_unpack_data(s_vifPacket,128,s_indices,36,0);
+    packet2_utils_vu_add_unpack_data(s_vifPacket,256,s_gifTag,1,0);
+    packet2_utils_vu_add_end_tag(s_vifPacket);
+    dma_channel_send_packet2(s_vifPacket,DMA_CHANNEL_VIF1,1);
+    if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    {
+        puts("BOX3D_VU1_FAIL,static_data_upload_timeout");
+        s_status="VU1 FAIL STATIC";
+        return 0;
+    }
+    // VIF1 received MPG and static DMEM data. Do not read the VU1
+    // microcode EE mapping until the user explicitly selects VERIFY.
+    // This lets a BIOS reset be attributed to upload or readback.
+    s_microUploaded=1;
+    s_status="VU1 MPG UPLOADED";
+    puts("BOX3D_VU1_UPLOAD,mpg_dma_done=1,readback_pending=1");
+    return 1;
+}
+
+int b3Vu1BoxesVerify(void)
+{
+    if(!s_microUploaded)
+    {
+        s_status="VU1 FAIL NO UPLOAD";
+        puts("BOX3D_VU1_FAIL,verify_before_upload");
+        return 0;
+    }
+    s_ready=0;
+    s_status="VU1 VERIFYING";
+    puts("BOX3D_VU1_PHASE,verify_vif_idle");
     // Wait for VIF1's own command processor as well as the DMA
     // channel. Bounded polling keeps broken MPG uploads from
     // permanently hanging the EE before any VU1 BOOT test.
@@ -138,7 +191,7 @@ int b3Vu1BoxesInit(void)
         return 0;
     }
     // EE can inspect VU1 instruction memory while the VU is idle.
-    // Never launch MSCAL unless readback (DMA or CPU-assisted) matches.
+    // Never launch MSCAL unless the complete VIF MPG readback matches.
     const u32* image=&B3Vu1Boxes_CodeStart;
     const uintptr_t imageBytes=
         (uintptr_t)&B3Vu1Boxes_CodeEnd-(uintptr_t)image;
@@ -179,37 +232,6 @@ int b3Vu1BoxesInit(void)
     puts("BOX3D_VU1_IMAGE,mpg_dma_readback=ok");
     puts("BOX3D_VU1_IMAGE,readback=ok");
 
-    int k=0;
-    for(int face=0;face<6;++face)
-    {
-        const unsigned char* q=faces[face];
-        const int v[6]={q[0],q[1],q[2],q[0],q[2],q[3]};
-        for(int j=0;j<6;++j)
-        {
-            s_indices[k][0]=(uint32_t)v[j];
-            s_indices[k][1]=(uint32_t)face;
-            s_indices[k][2]=0;
-            s_indices[k][3]=0;
-            ++k;
-        }
-    }
-    // GIF PACKED RGBAQ + XYZ2. Packed XYZ2 accepts a float4 storing
-    // 32-bit integer X,Y,Z in x,y,z. Low 16 bits of XY are GS 12.4,
-    // Z is a 32-bit integer (the scene framebuffer uses PSMZ16).
-    s_gifTag[0]=GIF_SET_TAG(36,1,1,3,GIF_FLG_PACKED,2);
-    s_gifTag[1]=(uint64_t)GIF_REG_RGBAQ |
-                ((uint64_t)GIF_REG_XYZ2<<4);
-    packet2_reset(s_vifPacket,0);
-    packet2_utils_vu_add_unpack_data(s_vifPacket,128,s_indices,36,0);
-    packet2_utils_vu_add_unpack_data(s_vifPacket,256,s_gifTag,1,0);
-    packet2_utils_vu_add_end_tag(s_vifPacket);
-    dma_channel_send_packet2(s_vifPacket,DMA_CHANNEL_VIF1,1);
-    if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
-    {
-        puts("BOX3D_VU1_FAIL,static_data_upload_timeout");
-        s_status="VU1 FAIL STATIC";
-        return 0;
-    }
     s_ready=1;
     s_status="VU1 READY DMA";
     puts("BOX3D_VU1_READY,vif1_dma=1,vu1_micro=1,xgkick=1,triangles_per_box=12,micro_cpu_fallback=disabled");

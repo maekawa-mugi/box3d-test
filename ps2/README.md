@@ -735,3 +735,42 @@ initialization and requires a different investigation.
 
 Rebuild `sh ps2/build_ee.sh` from a freshly updated branch and boot
 the freshly generated `ps2/box3d_ps2.elf` in PCSX2.
+
+## 2026-10-10: VU1R5 split MPG upload from EE micro-memory readback
+
+The EE-only startup (VU1 NOT INIT) is confirmed visible in PCSX2.
+A prior ELF unexpectedly returned to the BIOS when VU1 initialized
+during startup. The exact faulting instruction is still unknown.
+
+The separate VU1 diagnostic stages now distinguish **VIF1/MPG DMA**
+from the potentially problematic **EE memory-mapped readback**.
+Do not infer that an uploaded image was verified.
+
+On any BENCH 64/144/256/400 page, press TRIANGLE in order:
+
+| Press | HUD | Operation |
+| --- | --- | --- |
+| 0 | VU1 EE SAFE | EE only, no VIF1 or micro-memory accesses |
+| 1 | VU1 ACK | Pad acknowledgment only |
+| 2 | VU1 PATH3 | GS PATH3 flush, no VU1 |
+| 3 | VU1 INIT ARM | No VIF1 operations yet |
+| 4 | VU1 INIT | Upload MPG and static DMEM via VIF1; **no EE micro-memory readback** |
+| 5 | VU1 VERIFY ARM | No VIF1/EE micro-memory operations |
+| 6 | VU1 VERIFY | Check VIF idle, then read the EE-mapped instruction window at 0x11008000 |
+| 7 | VU1 VIF | Camera UNPACK (requires successful VERIFY) |
+| 8 | VU1 BOOT | Minimal one-shot MSCAL (requires successful VERIFY) |
+
+Only a successful VERIFY marks VU1 ready for execution.
+Neither INIT nor the appearance of a stage label proves that VU1
+executed. The HUD reads `TRIANGLE VU1R5` and reports
+`VU1 MPG UPLOADED` after successful INIT. At successful VERIFY,
+`VU1 READY DMA` is displayed.
+
+Capture PCSX2's last `BOX3D_VU1_PHASE` line and the EE exception
+log if pressing INIT or VERIFY returns to BIOS. This identifies
+whether the reset occurs on VIF1 MPG upload or EE micro-memory read.
+No direct CPU writes to micro memory are performed. The EE default
+remains safe, and PCSS/physics remain unchanged.
+
+This is a diagnostics/safety change, not a claim that MSCAL,
+the transform microprogram, or XGKICK now works.

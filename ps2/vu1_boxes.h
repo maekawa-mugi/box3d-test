@@ -12,9 +12,13 @@ typedef struct b3Vu1BoxInput
     uint32_t colors[6][4];
 } b3Vu1BoxInput;
 
-// Initialize once, after the GS has initialized its GIF channel.
-// Returns zero if packet2/VIF1 could not initialize.
+// Upload MPG and constant DMEM through VIF1. Does NOT touch EE-mapped
+// VU1 microcode memory or enable any microprogram execution.
+// Returns 1 when the DMA upload stage completes (not when verified).
 int b3Vu1BoxesInit(void);
+// Optional, separately armed EE micro-memory readback. VU1 is enabled
+// only if every uploaded instruction matches. Never called at startup.
+int b3Vu1BoxesVerify(void);
 // Short, stable ASCII status for the HUD. Unlike ready flag, also
 // describes why init failed (MPG readback, alignment, DMA, etc.).
 const char* b3Vu1BoxesStatus(void);
