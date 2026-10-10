@@ -16,8 +16,11 @@
 #include <stdio.h>
 #include <math.h>
 
-extern uint32_t B3Vu1Boxes_CodeStart __attribute__((section(".vudata")));
-extern uint32_t B3Vu1Boxes_CodeEnd __attribute__((section(".vudata")));
+// PS2SDK packet2_vif_add_micro_program expects u32* exactly.
+// The R5900 toolchain typedefs uint32_t as unsigned long and u32 as
+// unsigned int, so use the SDK type for DVP link symbols.
+extern u32 B3Vu1Boxes_CodeStart __attribute__((section(".vudata")));
+extern u32 B3Vu1Boxes_CodeEnd __attribute__((section(".vudata")));
 
 enum { B3_VU1_VIF_QWORDS=8192, B3_VU1_CODE_QWORDS=256 };
 static packet2_t* s_vifPacket;
@@ -28,6 +31,14 @@ static _Alignas(64) uint64_t s_gifTag[2];
 static b3GsCamera s_currentCamera;
 static int s_count;
 static int s_ready;
+
+// The VIF UNPACK_V4_32 source count is measured in 16-byte quadwords.
+// Check the R5900 ABI, not only the host C17 layout regression test.
+_Static_assert(sizeof(u32)==4, "PS2SDK VIF u32 must be 32-bit");
+_Static_assert(sizeof(uint32_t)==4, "VIF source uint32_t must be 32-bit");
+_Static_assert(sizeof(b3Vu1BoxInput)==224, "VU1 box is exactly 14 QW");
+_Static_assert(sizeof(s_indices[0])==16, "VU1 indices need V4_32");
+_Static_assert(sizeof(s_gifTag)==16, "GIF tag needs one quadword");
 
 static float b3Vu1Dot(b3GsPoint3 a,b3GsPoint3 b)
 {
