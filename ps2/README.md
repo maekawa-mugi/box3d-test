@@ -297,3 +297,32 @@ It refuses a mode-4 physics run if the new shared kernel is not called.
 The on-screen VU0 scenes are cleared to a fresh GS page before reporting
 speed so the new comparison remains visible. These changes are **not
 crosscompiled or emulator-tested yet**. Mode 0 remains the default.
+
+## Experimental mode 5: fused normal-contact impulse constraint
+
+Modes 0 through 4 are retained. Mode 5 keeps mode4 but replaces the
+scalar update of a *normal contact constraint* in the repeated contact
+solver loop with one COP2 macro-mode kernel. The VF registers retain
+intermediate values across normal-speed bias, effective-mass multiply,
+nonnegative impulse clamp, impulse delta, per-point normal total,
+per-manifold normal total, and twist-limit accumulation.
+
+The scratch layout is 8 input and 5 output float4 vectors, 208 bytes,
+aligned to 16 bytes. Normal contact impulse semantics assume finite
+inputs (VU0 has no IEEE NaN/Inf/subnormal behavior). The bench checks
+1920 finite scalar-versus-VU outputs at startup, refuses to pass a
+mode5 physics trial with `normals=0`, and runs a final ABBA
+`normal 32-box` **mode4 vs mode5** comparison. Only accept a gain if
+both the differential math and the 120-step physical snapshots pass.
+
+The last PCSX2 screenshot confirmed **mode3 1568444** versus
+**mode4 1567005** cycles/step (1.001x, noise-sized). The fused solver
+path remains **untested** with PS2DEV/PCSX2 until the next run.
+The standalone scalar smoke starts with VU0 disabled.
+
+Host C17 normal-kernel scalar fallback smoke:
+```sh
+cc -std=c17 -Wall -Wextra -Werror -ffp-contract=off \
+  src/ps2_vu0.c ps2/vu0_normal_test.c -lm -o /tmp/b3_vu0_normal
+/tmp/b3_vu0_normal
+```

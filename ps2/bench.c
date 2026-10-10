@@ -31,6 +31,7 @@ typedef struct BenchResult
     unsigned pairCalls;
     unsigned extendedPairs;
     unsigned sharedDots;
+    unsigned normalSolves;
     // Box3D's own nested profile: sum across all measured steps, in ms.
     // Read outside the externally timed b3World_Step call, so accessor
     // overhead does not contaminate the Count delta.
@@ -234,6 +235,7 @@ static BenchResult run_physics( int mode, int vu0Mode, int side, int layers )
     result.pairCalls = b3Ps2GetVU0PairCount();
     result.extendedPairs = b3Ps2GetVU0ExtendedPairCount();
     result.sharedDots = b3Ps2GetVU0SharedDotCount();
+    result.normalSolves = b3Ps2GetVU0NormalSolveCount();
     b3DestroyWorld( world );
     result.cleanupOk = beforeBytes == b3GetByteCount() && beforeWorlds == b3GetWorldCount();
     if ( !result.cleanupOk ) screen_stop( "world memory leak" );
@@ -578,6 +580,54 @@ static void vu0_shared_kernel_check( void )
     printf("BOX3D_VU0_SHARED_CHECK,PASS,lanes=768,max_error=%.7f\n",worst);
 }
 
+
+static void vu0_normal_kernel_check( void )
+{
+    b3Ps2VU0NormalSolveData d;
+    float maxError=0.0f;
+    for(int trial=0;trial<96;++trial)
+    {
+        for(int lane=0;lane<4;++lane)
+        {
+            const float t=0.017f*(float)(trial+1)+0.11f*(float)lane;
+            d.oldImpulse[lane]=1.3f+0.1f*t;
+            d.normalMass[lane]=0.25f+0.06f*t;
+            d.normalSpeed[lane]=(lane&1)?(2.7f+t):(-1.3f-t);
+            d.velocityBias[lane]=0.2f+0.3f*t;
+            d.oldPointTotal[lane]=0.5f+t;
+            d.oldManifoldTotal[lane]=1.2f+t;
+            d.oldTwistLimit[lane]=0.3f+0.2f*t;
+            d.leverArm[lane]=0.15f+t;
+        }
+        b3Ps2VU0NormalSolve(&d);
+        for(int lane=0;lane<4;++lane)
+        {
+            float old=d.oldImpulse[lane];
+            float neg=d.normalMass[lane]*(d.normalSpeed[lane]+d.velocityBias[lane]);
+            float raw=old-neg, next=raw>=0.0f?raw:0.0f;
+            const float expected[5]={
+                next,next-old,d.oldPointTotal[lane]+next,
+                d.oldManifoldTotal[lane]+next,d.oldTwistLimit[lane]+d.leverArm[lane]*next
+            };
+            const float actual[5]={
+                d.newImpulse[lane],d.deltaImpulse[lane],d.newPointTotal[lane],
+                d.newManifoldTotal[lane],d.newTwistLimit[lane]
+            };
+            for(int k=0;k<5;++k)
+            {
+                float error=fabsf(expected[k]-actual[k]);
+                if(error>maxError)maxError=error;
+                if(!isfinite(actual[k]) || error>0.0005f+0.00005f*fabsf(expected[k]))
+                    screen_stop("VU0 normal solver mismatch");
+            }
+        }
+    }
+    char line[144];
+    snprintf(line,sizeof(line),"VU0 normal solve: 1920 values PASS (err %.6f)",maxError);
+    screen_line(line);
+    printf("BOX3D_VU0_NORMAL_CHECK,PASS,results=1920,max_error=%.7f\n",maxError);
+}
+
 static void vu0_scene_benchmark( const char* label, int side, int layers, int baselineMode, int targetMode )
 {
     // ABBA interleaves the selected baseline and target mode. Comparing
@@ -588,9 +638,10 @@ static void vu0_scene_benchmark( const char* label, int side, int layers, int ba
     for ( int i = 0; i < 4; ++i )
     {
         runs[i] = run_physics( 0, modes[i], side, layers );
-        printf( "BOX3D_VU0_SCENE,%s,repeat=%d,vu0=%d,ticks=%llu,pairs=%u,extended=%u,shared=%u,y=%.7f,pos=%.7f,vel=%.7f\n",
+        printf( "BOX3D_VU0_SCENE,%s,repeat=%d,vu0=%d,ticks=%llu,pairs=%u,extended=%u,shared=%u,normals=%u,y=%.7f,pos=%.7f,vel=%.7f\n",
                 label,i,modes[i],(unsigned long long)runs[i].ticks,runs[i].pairCalls,
-                runs[i].extendedPairs,runs[i].sharedDots,runs[i].firstY,runs[i].positionSum,runs[i].velocitySum );
+                runs[i].extendedPairs,runs[i].sharedDots,runs[i].normalSolves,
+                runs[i].firstY,runs[i].positionSum,runs[i].velocitySum );
         printf( "BOX3D_VU0_PHASE,%s,repeat=%d,vu0=%d,step_ms=%.4f,pairs_ms=%.4f,collide_ms=%.4f,solve_ms=%.4f,sensors_ms=%.4f\n",
                 label,i,modes[i],runs[i].profileStepMs,runs[i].profilePairsMs,
                 runs[i].profileCollideMs,runs[i].profileSolveMs,runs[i].profileSensorsMs );
@@ -602,9 +653,13 @@ static void vu0_scene_benchmark( const char* label, int side, int layers, int ba
         {
             screen_stop( "VU0 extended pairing unused in physics" );
         }
-        if ( modes[i] == 4 && runs[i].sharedDots == 0 )
+        if ( modes[i] >= 4 && runs[i].sharedDots == 0 )
         {
             screen_stop( "VU0 shared-vector kernel unused in physics" );
+        }
+        if ( modes[i] == 5 && runs[i].normalSolves == 0 )
+        {
+            screen_stop( "VU0 fused normal solver unused in physics" );
         }
         // ABBA: trials 0/3 are the chosen baseline (which may be mode 2),
         // trials 1/2 are the target. Checking 'if (modes[i])' was WRONG
@@ -710,6 +765,7 @@ int main( void )
               (unsigned long long)(pairVector/256) );
     screen_line( vu0Line );
     vu0_shared_kernel_check();
+    vu0_normal_kernel_check();
     // Keep the useful final A/B scene rows on screen regardless of how
     // many earlier correctness/microbenchmark lines were printed.
     scr_clear();
@@ -724,8 +780,10 @@ int main( void )
     // Mode 3 is the immediately preceding solver variant; shared-input
     // COP2 loading is the *only* change being evaluated in mode 4.
     vu0_scene_benchmark( "shared 32-box", 4, 2, 3, 4 );
+    // One complete contact-normal impulse update now stays in VF registers.
+    vu0_scene_benchmark( "normal 32-box", 4, 2, 4, 5 );
     scr_setfontcolor( 0x77ff77u );
-    screen_line( "PASS: MMI + VU0 all four modes" );
+    screen_line( "PASS: MMI + VU0 modes 0-5" );
     puts( "BOX3D_VU0_BENCH_PASS" );
     puts( "BOX3D_BENCH_PASS" );
     screen_line( "Result held; reset PS2 to exit." );
