@@ -286,6 +286,10 @@ for symbol in main b3World_Step b3GsShadowBegin b3GsPresent b3GsTriangle3 b3Shad
 done
 printf 'PS2 SAMPLE pcf_4tap OK: %s\n' "$PCF_4TAP_OUT"
 
+# PS2SDK EE kernel exports sceSifInitRpc and SifLoadModule. The SDK
+# pad sample links libpad (-lpad) but NOT -lloadfile/-lsifrpc (these
+# nonexistent libraries caused a linker failure with PS2DEV GCC 15).
+# Keep -lkernel at the end for the RPC and IOP module-loader symbols.
 # The progressive scene viewer uses the original Box3D Human ragdoll.
 # PS2SDK libpad + IOP module loader enable immediate left/right changes.
 # Link human.c/utils.c ONLY into progressive samples; legacy 320 builds
@@ -301,7 +305,7 @@ PCF_PROGRESSIVE_OUT=${PCF_PROGRESSIVE_OUT:-$ROOT/ps2/box3d_ps2_samples_pcf_progr
     "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
     "$ROOT/ps2/shadow_project.c" \
     "$ROOT/shared/human.c" "$ROOT/shared/utils.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lloadfile -lsifrpc -lm -lkernel \
+    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lm -lkernel \
     -o "$PCF_PROGRESSIVE_OUT"
 "$READELF" -h "$PCF_PROGRESSIVE_OUT" | grep -q 'Machine:.*MIPS' ||
     die "pcf_progressive is not a MIPS ELF"
@@ -324,7 +328,7 @@ KAWASE_WIDE_OUT=${KAWASE_WIDE_OUT:-$ROOT/ps2/box3d_ps2_samples_kawase_wide.elf}
     "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
     "$ROOT/ps2/shadow_project.c" \
     "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lloadfile -lsifrpc -lm -lkernel \
+    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lm -lkernel \
     -o "$KAWASE_WIDE_OUT"
 "$READELF" -h "$KAWASE_WIDE_OUT" | grep -q 'Machine:.*MIPS' ||
     die "kawase_wide is not a MIPS ELF"
@@ -348,7 +352,7 @@ KAWASE_WIDE_PROGRESSIVE_OUT=${KAWASE_WIDE_PROGRESSIVE_OUT:-$ROOT/ps2/box3d_ps2_s
     "$ROOT/ps2/shadow_project.c" \
     "$ROOT/shared/human.c" "$ROOT/shared/utils.c" \
     "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lloadfile -lsifrpc -lm -lkernel \
+    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lm -lkernel \
     -o "$KAWASE_WIDE_PROGRESSIVE_OUT"
 "$READELF" -h "$KAWASE_WIDE_PROGRESSIVE_OUT" | grep -q 'Machine:.*MIPS' ||
     die "kawase_wide_progressive is not a MIPS ELF"
