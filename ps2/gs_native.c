@@ -668,6 +668,33 @@ static void b3GsKawaseBlit(int targetW,int targetH,int srcW,int srcH,
     b3GsAD(b3GsXYZ(targetW+shiftX,targetH+shiftY),GS_REG_XYZ2);
 }
 
+
+// Uniform GS shadow composite contract for PCF, PCSS and Dual Kawase:
+// source texture stores RGB coverage [0..128] on a disjoint VRAM page;
+// the scene remains in the back framebuffer, and a weighted sampled
+// coverage is SUBTRACTED from scene RGB with the GS fixed-function ALPHA
+// unit. Only a single filtered mask from a given caster group is used:
+// never blindly overdraw an additional opaque RAW silhouette.
+static void b3GsShadowCompositeSource(int mask,int width,int height)
+{
+    b3GsKawaseTarget(s_framebuffer[s_back],B3_PS2_GS_W,B3_PS2_GS_H);
+    b3GsKawaseSource(mask,width,height,0,0);
+}
+static void b3GsShadowCompositeTap(int width,int height,
+                                    int x,int y,int fix)
+{
+    b3GsAD(GS_SET_ALPHA(2,0,2,1,fix),GS_REG_ALPHA_1);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,width,height,x,y);
+}
+static void b3GsShadowCompositeFour(int width,int height,int shift,int fix)
+{
+    b3GsAD(GS_SET_ALPHA(2,0,2,1,fix),GS_REG_ALPHA_1);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,width,height,-shift,-shift);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,width,height, shift,-shift);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,width,height,-shift, shift);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,width,height, shift, shift);
+}
+
 #if defined(BOX3D_GS_PCF_4TAP)
 // Bilinear texel half-offsets realize the separable 3x3 tent kernel:
 // [1 2 1] x [1 2 1] / 16, using four equal-weight GS samples.
@@ -732,9 +759,9 @@ static void b3GsPcssScissor(void)
 void b3GsShadowBegin(void)
 {
     s_shadowPass=1;
-    // Preserve scene depth; draw white (128 RGB) coverage where the
-    // already-rendered receiver passes ZGREATER. Ground and ramp shadows
-    // are thus cropped by the real foreground surface, not just a 2D mask.
+    // The physical receiver bounds clip shadow geometry, while later
+    // opaque solids occlude it in screen space. Z writing stays off
+    // during the RGB coverage-mask pass.
     b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,B3_GS_DEPTH_PSM,1),GS_REG_ZBUF_1);
     // Clear all RAW texels for every caster: a scissored partial clear
     // left stale pixels for neighboring bilinear taps, creating boxes.
@@ -754,9 +781,8 @@ void b3GsShadowEnd(void)
     // geometry uses a 5x5 binomial / ~98 FIX pattern (21 nonzero taps).
     // The GS texture is FULL resolution and bilinear. No shadow-map
     // depth comparisons or CPU pixel convolution occur in this path.
-    b3GsKawaseTarget(s_framebuffer[s_back],B3_PS2_GS_W,B3_PS2_GS_H);
+    b3GsShadowCompositeSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H);
     b3GsPcssScissor();
-    b3GsKawaseSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H,9,8);
     if(s_pcssRadius==1)
     {
         for(int iy=-1;iy<=1;++iy)
@@ -764,9 +790,8 @@ void b3GsShadowEnd(void)
         {
             int fix=(ix==0&&iy==0)?24:
                     ((ix==0||iy==0)?12:6);
-            b3GsAD(GS_SET_ALPHA(2,0,2,1,fix),GS_REG_ALPHA_1);
-            b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
-                           B3_PS2_GS_W,B3_PS2_GS_H,ix,iy);
+            b3GsShadowCompositeTap(B3_PS2_GS_W,B3_PS2_GS_H,
+                                   ix,iy,fix);
         }
     }
     else
@@ -778,9 +803,8 @@ void b3GsShadowEnd(void)
             if(fix==0)continue;
             int dx=b3Ps2ShadowOffset5(ix,s_pcssRadius);
             int dy=b3Ps2ShadowOffset5(iy,s_pcssRadius);
-            b3GsAD(GS_SET_ALPHA(2,0,2,1,fix),GS_REG_ALPHA_1);
-            b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
-                           B3_PS2_GS_W,B3_PS2_GS_H,dx,dy);
+            b3GsShadowCompositeTap(B3_PS2_GS_W,B3_PS2_GS_H,
+                                   dx,dy,fix);
         }
     }
     // Next receiver, another caster, and the HUD all need full scissor.
@@ -803,8 +827,7 @@ void b3GsShadowEnd(void)
     //
     // No render-to-texture feedback: RAW and destination framebuffer
     // occupy disjoint PS2 GS VRAM allocations. TEXFLUSH handles cache.
-    b3GsKawaseTarget(s_framebuffer[s_back],B3_PS2_GS_W,B3_PS2_GS_H);
-    b3GsKawaseSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H,9,8);
+    b3GsShadowCompositeSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H);
 #if defined(BOX3D_GS_PCF_4TAP)
     b3GsPcf4Tap(B3_PS2_GS_W,B3_PS2_GS_H);
 #else
@@ -817,10 +840,8 @@ void b3GsShadowEnd(void)
                           ((ix==0 || iy==0)?12:6);
             // GS ALPHA = (ZERO - TEXEL_RGB) * FIX/128 + DEST_RGB.
             // For a 128-valued mask, sum 96 => darkening 96/255.
-            b3GsAD(GS_SET_ALPHA(2,0,2,1,fix),GS_REG_ALPHA_1);
-            b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
-                           B3_PS2_GS_W,B3_PS2_GS_H,
-                           ix*radius,iy*radius);
+            b3GsShadowCompositeTap(B3_PS2_GS_W,B3_PS2_GS_H,
+                                   ix*radius,iy*radius,fix);
         }
     }
 #endif
@@ -832,6 +853,15 @@ void b3GsShadowEnd(void)
     b3GsAD(GS_SET_ALPHA(0,2,2,1,128),GS_REG_ALPHA_1);
     b3GsKawaseBlit(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
                    B3_PS2_GS_W,B3_PS2_GS_H,0,0);
+#if defined(BOX3D_GS_KAWASE_WIDE)
+    // Near penumbra FIRST, before the half-resolution target is reused
+    // later by the pyramid. This is already bilinearly filtered at
+    // half-res, unlike the regressed opaque RAW-direct component.
+    // 4 * FIX=20 => 80 units for a connected, fairly sharp core.
+    b3GsShadowCompositeSource(s_halfMask[0],
+                              B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
+    b3GsShadowCompositeFour(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,1,20);
+#endif
     // Downsample/Kawase blur: half -> quarter.
     b3GsKawasePass(s_quarterMask[0],B3_KAWASE_QUARTER_W,
                    B3_KAWASE_QUARTER_H,s_halfMask[0],
@@ -877,39 +907,17 @@ void b3GsShadowEnd(void)
     // gray levels of shadow at 128-level coverage. Previous FIX=16
     // yielded only 64, so a sparse RAW mask disappeared after filtering.
     // RGB coverage rather than alpha controls blend opacity.
-    b3GsKawaseTarget(s_framebuffer[s_back],B3_PS2_GS_W,B3_PS2_GS_H);
 #if defined(BOX3D_GS_KAWASE_WIDE)
-    // Mix a SHARP full-resolution shadow mask with a small amount of
-    // the eighth-level extended Kawase, preserving contact edges.
-    // Without this, a 1/8-res texture dominates the scene and the
-    // shadow spreads far past the projected caster, especially at 480p.
-    // Raw FIX=72 + 4 wide taps FIX=6 = 96 total (same as 3x3 PCF).
-    // GS subtractive RGB blend, no extra VRAM or pass buffers.
-    b3GsKawaseSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H,9,8);
-    b3GsAD(GS_SET_ALPHA(2,0,2,1,72),GS_REG_ALPHA_1);
-    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
-                   B3_PS2_GS_W,B3_PS2_GS_H,0,0);
-    b3GsKawaseSource(s_halfMask[0],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,8,7);
-    b3GsAD(GS_SET_ALPHA(2,0,2,1,6),GS_REG_ALPHA_1);
-    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
-                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,-1,-1);
-    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
-                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H, 1,-1);
-    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
-                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,-1, 1);
-    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
-                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H, 1, 1);
+    // The far penumbra contributes only 4 * FIX=4 = 16 units.
+    // Total near (80) + far (16) = 96, entirely from FILTERED masks.
+    // No RAW shadow is directly subtracted from the final image.
+    b3GsShadowCompositeSource(s_halfMask[0],
+                              B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
+    b3GsShadowCompositeFour(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,1,4);
 #else
-    b3GsKawaseSource(s_halfMask[0],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,8,7);
-    b3GsAD(GS_SET_ALPHA(2,0,2,1,28),GS_REG_ALPHA_1);
-    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
-                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,-2,-2);
-    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
-                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H, 2,-2);
-    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
-                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,-2, 2);
-    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
-                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H, 2, 2);
+    b3GsShadowCompositeSource(s_halfMask[0],
+                              B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
+    b3GsShadowCompositeFour(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,2,28);
 #endif
 #endif
     // Restore the depth test before drawing another receiver or the
