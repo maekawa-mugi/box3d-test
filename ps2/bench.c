@@ -27,6 +27,7 @@ typedef struct BenchResult
     float firstY;
     uint32_t slowSamples;
     int cleanupOk;
+    unsigned pairCalls;
 } BenchResult;
 
 static void screen_line( const char* line )
@@ -140,6 +141,7 @@ static BenchResult run_physics( int mode, int vu0Mode, int side, int layers )
 
     b3Ps2SetMMIEnabled( mode );
     b3Ps2SetVU0Enabled( vu0Mode );
+    b3Ps2ResetVU0PairCount();
     const int64_t beforeBytes = b3GetByteCount();
     const int beforeWorlds = b3GetWorldCount();
 
@@ -209,6 +211,7 @@ static BenchResult run_physics( int mode, int vu0Mode, int side, int layers )
         result.velocitySum += v.x + v.y + v.z;
     }
 
+    result.pairCalls = b3Ps2GetVU0PairCount();
     b3DestroyWorld( world );
     result.cleanupOk = beforeBytes == b3GetByteCount() && beforeWorlds == b3GetWorldCount();
     if ( !result.cleanupOk ) screen_stop( "world memory leak" );
@@ -296,23 +299,34 @@ static void vu0_kernel_check( void )
     printf( "BOX3D_VU0_KERNEL,PASS,max_error=%.7f\n", worstError );
 }
 
+// Volatile source prevents the compiler from constant-folding COP1 while
+// still timing only the kernel (operand creation occurs before Count read).
+static volatile unsigned s_vu0MicroSeed = 1;
+
+static void vu0_micro_operands( b3Vec3W4* a, b3Vec3W4* b )
+{
+    float t = (float)((s_vu0MicroSeed++ & 127u) + 1u) * 0.003f;
+    *a = (b3Vec3W4){
+        b3SetW4(1.0f+t, 2.0f-t, 3.0f+2*t, 4.0f-t),
+        b3SetW4(2.5f-t, -3.5f+t, 4.5f+t, -5.5f-t),
+        b3SetW4(6.1f+t, 7.2f+t, -8.3f-t, 9.4f+2*t)
+    };
+    *b = (b3Vec3W4){
+        b3SetW4(3.1f+t, -2.1f+t, 1.1f-t, 4.2f+t),
+        b3SetW4(0.3f-t, 4.0f+t, 5.0f+t, -2.0f-t),
+        b3SetW4(-4.0f+t, 1.3f-t, 2.2f+t, 6.2f-t)
+    };
+}
+
 static uint64_t vu0_micro_sample( int enabled )
 {
-    const b3Vec3W4 a = {
-        b3SetW4(1.0f, 2.0f, 3.0f, 4.0f),
-        b3SetW4(2.5f, -3.5f, 4.5f, -5.5f),
-        b3SetW4(6.1f, 7.2f, -8.3f, 9.4f)
-    };
-    const b3Vec3W4 b = {
-        b3SetW4(3.1f, -2.1f, 1.1f, 4.2f),
-        b3SetW4(0.3f, 4.0f, 5.0f, -2.0f),
-        b3SetW4(-4.0f, 1.3f, 2.2f, 6.2f)
-    };
     float checksum = 0.0f;
     uint64_t ticks = 0;
     b3Ps2SetVU0Enabled( enabled );
     for ( int i = 0; i < 256; ++i )
     {
+        b3Vec3W4 a, b;
+        vu0_micro_operands( &a, &b );
         uint32_t start = b3Ps2ReadCpuCycles();
         b3FloatW4 r = b3DotW4( a, b );
         uint32_t delta = b3Ps2DeltaCpuCycles( start, b3Ps2ReadCpuCycles() );
@@ -324,6 +338,81 @@ static uint64_t vu0_micro_sample( int enabled )
     printf( "BOX3D_VU0_MICRO,vu0=%d,total_ticks=%llu,avg_ticks=%llu,sum=%.6f\n",
             enabled,(unsigned long long)ticks,(unsigned long long)(ticks/256),checksum );
     return ticks;
+}
+
+static uint64_t vu0_pair_micro_sample( int enabled )
+{
+    float checksum = 0.0f;
+    uint64_t ticks = 0;
+    b3Ps2SetVU0Enabled( enabled );
+    for ( int i = 0; i < 256; ++i )
+    {
+        b3Vec3W4 a, b, c, d;
+        vu0_micro_operands( &a, &b );
+        c = (b3Vec3W4){ b.X, a.Y, b.Z };
+        d = (b3Vec3W4){ a.Z, b.Y, a.X };
+        b3FloatW4 r0, r1;
+        uint32_t start = b3Ps2ReadCpuCycles();
+        if ( enabled == 2 )
+        {
+            b3DotPairW4( a, b, c, d, &r0, &r1 );
+        }
+        else
+        {
+            r0 = b3DotW4( a, b );
+            r1 = b3DotW4( c, d );
+        }
+        uint32_t delta = b3Ps2DeltaCpuCycles( start, b3Ps2ReadCpuCycles() );
+        if ( delta >= UINT32_C(0x80000000) ) screen_stop( "VU0 pair micro timer invalid" );
+        ticks += delta;
+        checksum += r0.x+r0.y+r0.z+r0.w+r1.x+r1.y+r1.z+r1.w;
+    }
+    b3Ps2SetVU0Enabled( 0 );
+    printf( "BOX3D_VU0_PAIR_MICRO,mode=%d,total_ticks=%llu,avg_ticks=%llu,sum=%.6f\n",
+            enabled,(unsigned long long)ticks,(unsigned long long)(ticks/256),checksum );
+    return ticks;
+}
+
+static void vu0_pair_kernel_check( void )
+{
+    b3Ps2VU0Dot4PairData p;
+    float maxErr = 0.0f;
+    for ( int trial = 0; trial < 96; ++trial )
+    {
+        for ( int job = 0; job < 2; ++job )
+        {
+            for ( int lane = 0; lane < 4; ++lane )
+            {
+                float t = 0.017f*(float)(trial+1) + 0.31f*(float)(job+1) + 0.07f*(float)lane;
+                p.pair[job].ax[lane] = 0.2f + t;
+                p.pair[job].bx[lane] = -0.4f - 2*t;
+                p.pair[job].ay[lane] = 1.2f + 2*t;
+                p.pair[job].by[lane] = 0.7f - t;
+                p.pair[job].az[lane] = -0.8f + t;
+                p.pair[job].bz[lane] = 1.1f + t;
+            }
+        }
+        b3Ps2VU0Dot4Pair( &p );
+        for ( int job = 0; job < 2; ++job )
+        {
+            for ( int lane = 0; lane < 4; ++lane )
+            {
+                b3Ps2VU0Dot4Data* x = &p.pair[job];
+                float expected = ((x->ax[lane]*x->bx[lane]) + (x->ay[lane]*x->by[lane])) +
+                                  x->az[lane]*x->bz[lane];
+                float error = fabsf( x->out[lane] - expected );
+                if ( error > maxErr ) maxErr = error;
+                if ( !isfinite(x->out[lane]) || error > 0.0005f+0.00005f*fabsf(expected) )
+                {
+                    screen_stop( "VU0 paired dot differs from COP1" );
+                }
+            }
+        }
+    }
+    char line[160];
+    snprintf( line,sizeof(line),"VU0 paired: 768 lanes verified (max err %.6f)",maxErr );
+    screen_line( line );
+    printf( "BOX3D_VU0_PAIR_CHECK,PASS,max_error=%.7f\n", maxErr );
 }
 
 
@@ -420,18 +509,22 @@ static void vu0_batch_benchmark( void )
            (unsigned long long)(batchTicks/iterations),checksum);
 }
 
-static void vu0_scene_benchmark( const char* label, int side, int layers )
+static void vu0_scene_benchmark( const char* label, int side, int layers, int targetMode )
 {
-    // Same ABBA experiment as MMI: VU0 disabled/enabled/enabled/disabled.
-    const int modes[4] = { 0, 1, 1, 0 };
+    // ABBA interleaves scalar and the selected VU0 mode to reduce drift.
+    const int modes[4] = { 0, targetMode, targetMode, 0 };
     BenchResult runs[4];
     uint64_t baseline = 0, vu0 = 0;
     for ( int i = 0; i < 4; ++i )
     {
         runs[i] = run_physics( 0, modes[i], side, layers );
-        printf( "BOX3D_VU0_SCENE,%s,repeat=%d,vu0=%d,ticks=%llu,y=%.7f,pos=%.7f,vel=%.7f\n",
-                label,i,modes[i],(unsigned long long)runs[i].ticks,
+        printf( "BOX3D_VU0_SCENE,%s,repeat=%d,vu0=%d,ticks=%llu,pairs=%u,y=%.7f,pos=%.7f,vel=%.7f\n",
+                label,i,modes[i],(unsigned long long)runs[i].ticks,runs[i].pairCalls,
                 runs[i].firstY,runs[i].positionSum,runs[i].velocitySum );
+        if ( modes[i] == 2 && runs[i].pairCalls == 0 )
+        {
+            screen_stop( "VU0 paired backend unused in physics" );
+        }
         if ( modes[i] ) vu0 += runs[i].ticks;
         else baseline += runs[i].ticks;
     }
@@ -494,10 +587,19 @@ int main( void )
               (unsigned long long)(vu0VectorTicks/256) );
     screen_line( vu0Line );
     vu0_batch_benchmark();
-    vu0_scene_benchmark( "VU0 eight-box", 2, 2 );
-    vu0_scene_benchmark( "VU0 32-box", 4, 2 );
+    vu0_pair_kernel_check();
+    uint64_t pairScalar = vu0_pair_micro_sample( 0 );
+    uint64_t pairVector = vu0_pair_micro_sample( 2 );
+    snprintf( vu0Line, sizeof(vu0Line), "VU0 pair avg: COP1 %llu / VU0 %llu ticks",
+              (unsigned long long)(pairScalar/256),
+              (unsigned long long)(pairVector/256) );
+    screen_line( vu0Line );
+    vu0_scene_benchmark( "single eight-box", 2, 2, 1 );
+    vu0_scene_benchmark( "single 32-box", 4, 2, 1 );
+    vu0_scene_benchmark( "paired eight-box", 2, 2, 2 );
+    vu0_scene_benchmark( "paired 32-box", 4, 2, 2 );
     scr_setfontcolor( 0x77ff77u );
-    screen_line( "PASS: MMI + VU0 math and physics within tolerance" );
+    screen_line( "PASS: MMI + VU0 single/paired math + physics" );
     puts( "BOX3D_VU0_BENCH_PASS" );
     puts( "BOX3D_BENCH_PASS" );
     screen_line( "Result held; reset PS2 to exit." );

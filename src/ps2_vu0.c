@@ -18,6 +18,17 @@ _Static_assert( offsetof(b3Ps2VU0Dot4Data, out) == 96, "VU0 output offset" );
 _Static_assert( sizeof(b3Ps2VU0Dot4Data) % 16 == 0, "VU0 record stride" );
 
 static int s_vu0Mode;
+static unsigned s_vu0PairCount;
+
+void b3Ps2ResetVU0PairCount( void )
+{
+    s_vu0PairCount = 0;
+}
+
+unsigned b3Ps2GetVU0PairCount( void )
+{
+    return s_vu0PairCount;
+}
 
 void b3Ps2SetVU0Enabled( int mode )
 {
@@ -109,6 +120,7 @@ _Static_assert( offsetof(b3Ps2VU0Dot4PairData, pair[1]) == 112, "VU0 paired offs
 
 void b3Ps2VU0Dot4Pair( b3Ps2VU0Dot4PairData* data )
 {
+    s_vu0PairCount++;
 #if defined(BOX3D_PS2) && (defined(__mips__) || defined(__mips))
     // Both jobs have independent dependencies. Put all multiplies before
     // either add, then stagger the two separate chains. This allows VU0's

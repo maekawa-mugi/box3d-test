@@ -106,7 +106,7 @@ of actual-hardware validation is made.
 
 ## VU0 macro-mode numerical A/B benchmark
 
-The same `ps2/box3d_ps2_bench.elf` now also runs a VU0 test after the
+The same `ps2/box3d_ps2_bench.elf` now also runs VU0 single and paired tests after the
 original MMI tests. VU0 is the EE's 4-wide floating-point COP2 vector unit
 and is distinct from integer MMI and VU1 micro mode.
 
@@ -124,7 +124,24 @@ and is distinct from integer MMI and VU1 micro mode.
   aggregates, first-box height, and cleanup. Outputs include
   `BOX3D_VU0_KERNEL`, `BOX3D_VU0_MICRO`, `BOX3D_VU0_SCENE`,
   `BOX3D_VU0_SUMMARY`, `BOX3D_VU0_BENCH_PASS`.
-- **VU0 is opt-in** and disabled by default. Do not switch within a world
+- **VU0 is opt-in** and disabled by default. Runtime mode 1 is the
+  original one-dot-per-call backend; mode 2 fuses two independent dot4
+  operations, interleaving six VMUL and four VADD operations to hide
+  arithmetic latency. A standalone dot remains COP1 in mode 2.
+  Hot paired sites now include narrowphase Gauss-arc tests, contact
+  tangent/friction and iterative normal constraints; this is still not
+  complete solver vectorization. The 224-byte aligned pair scratch is
+  statically verified. The scene log includes actual `pairs=` calls to
+  confirm use of the new physics path. We time each mode separately.
+  
+  The old COP1 microbenchmark used constant vector inputs that could be
+  folded by GCC, creating a misleading 20-tick scalar "speed".
+  Both the single-dot and new pair benchmarks now construct varying
+  volatile-seeded operands **outside** the timed region; the test accumulates
+  and prints results. This is a more useful comparison, though it still
+  includes CP0 measurement overhead and is not a hardware result.
+  
+   Do not switch within a world
   step, use multiple EE workers, or use another VU0 microprogram concurrently.
   This initial per-call transfer implementation may well be *slower*;
   measure before committing to deeper contact-solver VU0 work.

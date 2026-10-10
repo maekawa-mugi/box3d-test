@@ -42,3 +42,7 @@ typedef struct b3Ps2VU0Dot4PairData
 
 // Interleaves independent VU0 multiplies and adds to cover pipeline stalls.
 void b3Ps2VU0Dot4Pair( b3Ps2VU0Dot4PairData* data );
+
+// Instrumentation counters to ensure the physics A/B exercises paired VU0.
+void b3Ps2ResetVU0PairCount( void );
+unsigned b3Ps2GetVU0PairCount( void );
