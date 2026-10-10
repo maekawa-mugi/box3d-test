@@ -877,8 +877,14 @@ int main(void)
 #if defined(BOX3D_GS_PCSS_SHADOWS)
     puts("BOX3D_SHADOW_FILTER,PCSS_INSPIRED_PER_CASTER,source=320x224,radius=1..5,taps=9_or_21");
 #elif defined(BOX3D_GS_PCF_SHADOWS)
+#if defined(BOX3D_GS_PCF_4TAP)
+    printf("BOX3D_SHADOW_FILTER,PCF_4_BILINEAR,source=%dx%d,radius=1px,weight_sum=96\n",
+           B3_PS2_GS_W,B3_PS2_GS_H);
+    puts("BOX3D_PCF_ACTIVE,mode=4tap_fullres_mask,HUD=top_left+bottom_right");
+#else
     puts("BOX3D_SHADOW_FILTER,PCF_MASK_3X3,source=320x224,radius=1px,weight_sum=96");
     puts("BOX3D_PCF_ACTIVE,mode=3x3_fullres_mask,HUD=top_left+bottom_right");
+#endif
 #endif
     b3SetAssertFcn(fail_assert);
     b3SetLogFcn(log_message);

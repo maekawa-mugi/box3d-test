@@ -23,7 +23,7 @@ with full parity.
 | Joints | 17 | 0 | Joint frame/constraint shapes pending |
 | Manifold | 11 | 0 | Contact manifold/normal visualizer pending |
 | Mesh | 9 | 0 | Triangle mesh, height field, streaming pending |
-| Ragdoll | 5 | 0 | Skeleton, capsules, joints pending |
+| Ragdoll | 5 | 1 | Original shared/human.c 12-bone articulated Box demo; GS capsule proxies still simplified |
 | Replay | 0 | 0 | No RegisterSample entry; special non-sample subsystem |
 | Restitution | 10 | 1 | Varying BOX mode, 40 boxes; sphere option and controls pending |
 | Robustness | 4 | 0 | Extreme scene/depth scaling pending |
@@ -31,20 +31,21 @@ with full parity.
 | Stacking | 14 | 1 | Box Stack 40 cubes; others pending |
 | Tree | 1 | 0 | Dynamic tree debug visualization pending |
 | World | 4 | 1 | Far Stack origin preset; large-offset slider pending |
-| **Total** | **185** | **7** | Many categories still missing |
+| **Total** | **185** | **8** | Many categories still missing |
 
-The seven progressive viewer scenes are:
+The eight progressive viewer scenes are:
 `Stacking/Box Stack` (40 boxes),
 `Shapes/Inclined Plane` (adapted),
 `Bodies/Spinning Book` (3 angular axes),
 `Restitution/Varying` (40 cubes, the original demo's box option),
 `Shapes/Slide Twist`,
-`Shapes/Conveyor Belt`, and
-`World/Far Stack` (floating-point origin preset).
+`Shapes/Conveyor Belt`, `World/Far Stack` (floating-point origin preset), and
+`Ragdoll/Box` (original `CreateHuman()`, 12 articulated capsule
+bodies and joint constraints; approximate cuboid visual proxies).
 The original validated 320x224 visual ELFs intentionally keep their
 three-scene loop and do not change behavior.
 
-All seven use real Box3D physical worlds and Box3D body pose queries,
+All eight use real Box3D physical worlds and Box3D body pose queries,
 but *scene settings/cameras/materials may be adapted*. Full fidelity
 requires each original geometry, controls and dynamic updates to be
 compared with its source; some demos must draw non-rigid debug data
@@ -64,8 +65,9 @@ ported faithfully by rendering only rigid cuboids.
   The renderer already packs **the whole frame's GIF A+D writes into
   a single DMA submission**, not one DMA per triangle. It still
   spends EE cycles generating/projecting vertices individually.
-- PS2 controller navigation and menus replacing the desktop ImGui
-  inspector, along with camera orbit and scene-control interaction.
+- PS2 controller navigation on the updated progressive and expanded
+  Kawase builds: LEFT/RIGHT switches scenes immediately. Full menus,
+  camera orbit, and per-scene desktop ImGui controls remain pending.
 - Visual parity tests and performance budgets for each original
   registration, and targeted fallback options for GS 4 MiB VRAM.
 
