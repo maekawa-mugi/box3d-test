@@ -13,11 +13,12 @@ export PATH PS2DEV PS2SDK
 CC=${CC:-mips64r5900el-ps2-elf-gcc}
 NM=${NM:-mips64r5900el-ps2-elf-nm}
 READELF=${READELF:-mips64r5900el-ps2-elf-readelf}
+DVP=${DVP:-dvp-as}
 CMAKE=${CMAKE:-cmake}
 OUT=${OUT:-$ROOT/ps2/box3d_ps2.elf}
 BUILD=${BUILD:-$ROOT/build/ps2-ee}
 die() { printf 'PS2 BUILD ERROR: %s\n' "$*" >&2; exit 1; }
-for tool in "$CC" "$NM" "$READELF" "$CMAKE"; do
+for tool in "$CC" "$NM" "$READELF" "$DVP" "$CMAKE"; do
     command -v "$tool" >/dev/null 2>&1 || die "Missing executable: $tool"
 done
 case "$("$CC" -dumpmachine)" in
@@ -26,6 +27,7 @@ case "$("$CC" -dumpmachine)" in
 esac
 [ -f "$PS2SDK/ee/lib/libpad.a" ] || die "Missing PS2SDK libpad.a"
 [ -f "$PS2SDK/ee/lib/libkernel.a" ] || die "Missing PS2SDK libkernel.a"
+[ -f "$PS2SDK/ee/lib/libpacket2.a" ] || die "Missing PS2SDK libpacket2.a"
 sh "$ROOT/ps2/check_gs_preprocessor.sh"
 if [ -n "${CMAKE_GENERATOR:-}" ]; then
     GENERATOR=$CMAKE_GENERATOR
@@ -48,25 +50,32 @@ esac
 LIB="$BUILD/src/libbox3d.a"
 [ -s "$LIB" ] || die "Missing R5900 Box3D archive: $LIB"
 
+# Native VU1 microcode is assembled by DVP, not EE GCC.
+"$DVP" "$ROOT/ps2/vu1_boxes.vsm" -o "$BUILD/vu1_boxes_micro.o"
+[ -s "$BUILD/vu1_boxes_micro.o" ] || die "VU1 microcode object was not produced"
+
 "$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
     -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 -DBOX3D_PS2_UNIFIED=1 \
     -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
     -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
     -I"$PS2SDK/ee/rpc/pad/include" \
     "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
+    "$ROOT/ps2/vu1_boxes.c" "$BUILD/vu1_boxes_micro.o" \
     "$ROOT/ps2/shadow_project.c" "$ROOT/shared/human.c" \
     "$ROOT/shared/utils.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lm -lkernel \
+    -L"$PS2SDK/ee/lib" -lpacket2 -lgraph -ldma -lpad -lm -lkernel \
     -o "$OUT"
 
 "$READELF" -h "$OUT" | grep -q 'Machine:.*MIPS' ||
     die "Output is not a MIPS executable"
 "$READELF" -h "$OUT" | grep -q 'Type:.*EXEC' ||
     die "Output is not an executable ELF"
-for symbol in main b3World_Step b3GsPresent b3GsShadowSetPenumbra b3ShadowProjectBox CreateHuman padRead; do
+for symbol in main b3World_Step b3GsPresent b3GsShadowSetPenumbra b3ShadowProjectBox CreateHuman padRead b3Vu1BoxesInit b3Vu1BoxesSubmit; do
     "$NM" --defined-only "$OUT" | grep -Eq " [Tt] ${symbol}$" ||
         die "Unified ELF missing symbol: $symbol"
 done
+"$NM" --defined-only "$OUT" | grep -Eq ' [TtDd] B3Vu1Boxes_CodeStart$' ||
+    die "Unified ELF missing actual VU1 microprogram symbol"
 printf 'BOX3D PS2 UNIFIED OK: %s\n' "$OUT"
-printf 'VIDEO: 640x480p | SHADOW: PCSS with bilinear PCF | D-PAD: LEFT/RIGHT pages\n'
+printf 'VIDEO: 640x480p | SHADOW: PCSS | GEOMETRY: VU1 microcode + VIF1 DMA (stress, toggle TRIANGLE)\n'
 printf 'Stale box3d_ps2_samples_*.elf files may exist from older builds; do not load them.\n'

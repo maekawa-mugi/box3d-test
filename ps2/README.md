@@ -391,3 +391,45 @@ OFF skips CPU shadow projection and all its GS passes, making its
 `avg_build_ms` directly comparable to the shadowed modes. The current
 mode is displayed in the scene HUD and logged with `BOX3D_PERF`.
 Default mode remains PCSS, unchanged from the previous screenshot.
+
+## 2026-10-10: real VU1/VIF1/GIF PATH1 solid-box pipeline (experimental)
+
+The **400-body stress path now defaults to VU1 for solid boxes**; the
+other showcase scenes continue using the previous EE geometry renderer
+so their edge strokes and special platform layering do not regress.
+Triangle toggles the VU1 geometry path on/off for same-scene A/B
+benchmarking. If initialization fails, solids fall back to the EE path.
+
+The new `vu1_boxes.vsm` is actual VU1 *micro-mode* code assembled with
+`dvp-as`. VIF1 DMA uploads a camera transform and, for each solid box,
+eight 16-byte world-space corners plus six 16-byte flat RGBAQ colors.
+The microprogram perspective-divides each corner, converts to GS 12.4
+XY plus reversed Z, emits 36 indexed vertices into VU1 data memory,
+and sends a GIF PACKED `RGBAQ,XYZ2` triangle stream with `XGKICK`.
+No screen-space division or GIF XYZ packet construction occurs on the
+EE for boxes sent via VU1. Exceptional near-clipped or out-of-range
+boxes are still rendered through the existing EE safety path.
+
+**GIF order is explicit:** the earlier EE GIF PATH3 packet renders the
+sky, floor and all PCSS masks and composites and is completed before
+VU1 draws solids through PATH1; the final EE GIF PATH3 packet draws the
+HUD, emits FINISH, waits VSync, and swaps framebuffers. The VIF chain
+uses FLUSHA after each box to guarantee the one VU1 output buffer is
+not overwritten while XGKICK still reads it. This is a *correctness*
+baseline, not yet optimal double buffering; a later dual-buffer VU1
+output can remove those GPU-side synchronization bubbles.
+
+Build now requires `dvp-as`, `libpacket2.a`, `vu1_boxes.vsm` and
+`vu1_boxes.c`. The ELF contains the actual VU1 microcode symbol,
+verified by `nm`. The HUD page line displays `D1` when stress-scene
+DMA geometry is enabled; `BOX3D_VU1_FRAME` reports number of VU1
+boxes and `BOX3D_PERF` includes `vu1_enabled` / `vu1_boxes`.
+CPU `DRAW` includes VIF1 waiting, unlike a pure CPU-packet count,
+and GSWAIT only covers the final GIF DMA finish, not all VU1 GPU time.
+
+This needs **PS2DEV / dvp-as compilation and PCSX2 software + hardware
+renderer screenshots** before any speedup or pixel-equivalence claim.
+Compare 256 and 400 boxes with the same `shadow_mode` and substeps,
+toggle TRIANGLE to compare EE and VU1 and confirm that the PCSS
+penumbra remains unchanged. The `vu1_boxes_layout_test.c` host test
+checks ABI and projection constants but cannot verify VU opcodes.

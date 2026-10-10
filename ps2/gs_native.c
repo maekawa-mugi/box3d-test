@@ -48,6 +48,9 @@ static _Alignas(64) B3GsQword s_packet[B3_GS_QWORDS];
 static unsigned s_used;
 static unsigned s_lastGifQwords;
 #if defined(BOX3D_PS2_UNIFIED)
+static unsigned s_preVuGifQwords;
+#endif
+#if defined(BOX3D_PS2_UNIFIED)
 #define B3_GS_GROUND_CACHE_QWORDS 4096
 static _Alignas(64) B3GsQword s_groundCache[B3_GS_GROUND_CACHE_QWORDS];
 static unsigned s_groundCacheCount,s_groundRecordStart;
@@ -348,6 +351,9 @@ void b3GsBegin(void)
 {
     s_used = 1; // GIF packed A+D tag filled in during Present
     s_errors = 0;
+#if defined(BOX3D_PS2_UNIFIED)
+    s_preVuGifQwords=0;
+#endif
 #if defined(BOX3D_GS_OFFICIAL)
     s_shadowPass = 0;
 #endif
@@ -1370,6 +1376,24 @@ unsigned b3GsGetLastGifQwords(void)
 uint32_t b3GsGetLastGsWaitTicks(void) {return s_lastGsWaitTicks;}
 uint32_t b3GsGetLastVsyncWaitTicks(void) {return s_lastVsyncWaitTicks;}
 #endif
+#if defined(BOX3D_PS2_UNIFIED)
+int b3GsFlushForVu1(void)
+{
+    // Finish the PATH3 background and PCSS packet before VU1 XGKICK.
+    // No frame flip or VSync here. Final HUD still goes through PATH3.
+    if(s_errors)return 0;
+    b3GsAD(1,GS_REG_FINISH);
+    s_packet[0].data=GIF_SET_TAG(s_used-1,1,0,0,GIF_FLG_PACKED,1);
+    s_packet[0].reg=GIF_REG_AD;
+    *GS_REG_CSR=(uint64_t)2;
+    dma_channel_send_normal(DMA_CHANNEL_GIF,s_packet,s_used,0,0);
+    dma_channel_wait(DMA_CHANNEL_GIF,0);
+    while(((*GS_REG_CSR)&(uint64_t)2)==0){}
+    s_preVuGifQwords+=s_used;
+    s_used=1;
+    return 1;
+}
+#endif
 void b3GsPresent(void)
 {
     // One GIF PACKED tag (NREG=1, A+D), followed by raw 128b A+D pairs.
@@ -1379,7 +1403,11 @@ void b3GsPresent(void)
     if (s_errors) printf("BOX3D_GS_WARNING,packet_overflow=%d\n",s_errors);
     s_packet[0].data = GIF_SET_TAG(s_used - 1, 1, 0, 0, GIF_FLG_PACKED, 1);
     s_packet[0].reg = GIF_REG_AD;
+#if defined(BOX3D_PS2_UNIFIED)
+    s_lastGifQwords = s_preVuGifQwords + s_used;
+#else
     s_lastGifQwords = s_used;
+#endif
 
     // Clear GS FINISH (W1C), DMA sends cache-flushed packet and wait for
     // GS completion, not just DMA drain. Never write displayed framebuffer.

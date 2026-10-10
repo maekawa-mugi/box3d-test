@@ -39,6 +39,9 @@ typedef struct b3GsCamera {
 // Cache the camera-dependent (but frame-independent) checker floor GIF
 // commands once after scene creation, before receiver shadows.
 void b3GsSetShadowFilterMode(int mode); // 0=PCSS,1=PCF,2=hard
+// End the PATH3 shadow/background packet, keep the same framebuffer,
+// and prepare an empty packet for HUD after VU1 GIF PATH1 XGKICK.
+int b3GsFlushForVu1(void);
 void b3GsInvalidateGroundCache(void);
 int b3GsEmitCachedGround(void);
 void b3GsBeginGroundRecord(void);

@@ -12,6 +12,7 @@
 #if defined(BOX3D_PS2_UNIFIED)
 #include "unified_demo.h"
 #include "../src/ps2_vu0.h"
+#include "vu1_boxes.h"
 #endif
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
 #include "ee_clock.h"
@@ -96,6 +97,9 @@ static int s_padReady;
 static int s_simSubsteps=4;
 static int s_vu0Mode=0;
 static int s_shadowVisualMode=0; // 0=PCSS,1=PCF,2=HARD,3=OFF,4=LEGACY
+static int s_vu1Ready;
+static int s_vu1Enabled=1;
+static int s_lastVu1Boxes;
 #endif
 static void pad_nav_init(void)
 {
@@ -127,7 +131,7 @@ static int pad_nav_poll(void)
     if(!padRead(0,0,&buttons))return 0;
     uint16_t held=(uint16_t)(~buttons.btns)&(PAD_LEFT|PAD_RIGHT
 #if defined(BOX3D_PS2_UNIFIED)
-                                             |PAD_UP|PAD_DOWN|PAD_SQUARE
+                                             |PAD_UP|PAD_DOWN|PAD_SQUARE|PAD_TRIANGLE
 #endif
                                              );
     uint16_t pressed=(uint16_t)(held&~s_padHeld);
@@ -145,6 +149,12 @@ static int pad_nav_poll(void)
         b3Ps2SetVU0Enabled(s_vu0Mode);
         printf("BOX3D_PHYS_MODE,substeps=%d,vu0=%d\n",
                s_simSubsteps,s_vu0Mode);
+    }
+    if(pressed&PAD_TRIANGLE)
+    {
+        s_vu1Enabled=!s_vu1Enabled;
+        printf("BOX3D_VU1_MODE,enabled=%d,available=%d\n",
+               s_vu1Enabled,s_vu1Ready);
     }
     if(pressed&PAD_SQUARE)
     {
@@ -1221,6 +1231,32 @@ static void render_receiver_shadows(int receiver)
 #endif
 #endif
 
+// Each stress-scene solid box emits 8 positions + 6 shaded faces to
+// VU1 via VIF1 DMA. The VU1 microprogram projects 8 corners and
+// XGKICKs the 12 unculled GS triangles. Occlusion remains GS Z-tested.
+// Fallback boxes preserve the original clipped EE renderer.
+#if defined(BOX3D_PS2_UNIFIED)
+static int queue_vu1_box(const SceneBody* body)
+{
+    const b3Vec3* axes=body->cachedAxes;
+    const b3Vec3 light={0.44f,0.82f,0.36f};
+    uint8_t colors[6][3];
+    for(int face=0;face<6;++face)
+    {
+        int axis=(face<2)?2:(face<4?0:1);
+        float sign=(face&1)?1.0f:-1.0f;
+        const b3Vec3* n=&axes[axis];
+        float diffuse=sign*(n->x*light.x+n->y*light.y+n->z*light.z);
+        if(diffuse<0.0f)diffuse=0.0f;
+        float shade=0.44f+0.54f*diffuse;
+        colors[face][0]=(uint8_t)(body->r*shade);
+        colors[face][1]=(uint8_t)(body->g*shade);
+        colors[face][2]=(uint8_t)(body->b*shade);
+    }
+    return b3Vu1BoxesAdd(body->cachedVertices,colors);
+}
+#endif
+
 static void render_official_hud(void)
 {
 #if defined(BOX3D_GS_PROGRESSIVE)
@@ -1245,8 +1281,9 @@ static void render_official_hud(void)
     b3GsOverlayText(28,24,"BOX3D PS2 480P",239,245,247);
     b3GsOverlayText(28,53,sceneNames[s_scene.kind],189,214,223);
     char page[48];
-    snprintf(page,sizeof(page),"PAGE %d/%d PCSS S%d V%d",
-             s_scene.kind+1,SCENE_COUNT,s_simSubsteps,s_vu0Mode);
+    snprintf(page,sizeof(page),"PAGE %d/%d PCSS S%d D%d",
+             s_scene.kind+1,SCENE_COUNT,s_simSubsteps,
+             s_vu1Ready&&s_vu1Enabled&&s_scene.kind>=8);
     b3GsOverlayText(28,82,page,221,233,244);
 #else
     b3GsOverlayPanel(14,14,310,104);
@@ -1335,6 +1372,7 @@ static void render(void)
 #if defined(BOX3D_PS2_UNIFIED)
     s_frameShadowTicks=0;
     s_frameBoxTicks=0;
+    s_lastVu1Boxes=0;
     cacheSceneBodyPoses();
 #endif
 #if defined(BOX3D_GS_PROGRESSIVE)
@@ -1399,10 +1437,41 @@ static void render(void)
 #if defined(BOX3D_PS2_UNIFIED)
     phaseStart=b3Ps2ReadCpuCycles();
 #endif
-    for(int i=firstDynamic;i<s_scene.count;++i)
-        draw_box(&s_scene.objects[i]);
+#if defined(BOX3D_PS2_UNIFIED)
+    if(s_scene.kind>=8 && s_vu1Ready && s_vu1Enabled)
+    {
+        b3Vu1BoxesBegin(s_scene.camera);
+        int queued=0;
+        for(int i=firstDynamic;i<s_scene.count;++i)
+        {
+            const SceneBody* body=&s_scene.objects[i];
+            if(queue_vu1_box(body))
+                ++queued;
+            else
+                draw_box(body);
+        }
+        if(queued!=0)
+        {
+            // PATH3: floor + PCSS + any exceptional EE solids.
+            // PATH1: VU1-generated GS triangles, followed by HUD PATH3.
+            if(b3GsFlushForVu1())
+                s_lastVu1Boxes=b3Vu1BoxesSubmit();
+            else
+                for(int i=firstDynamic;i<s_scene.count;++i)
+                    draw_box(&s_scene.objects[i]);
+        }
+    }
+    else
+#endif
+    {
+        for(int i=firstDynamic;i<s_scene.count;++i)
+            draw_box(&s_scene.objects[i]);
+    }
 #if defined(BOX3D_PS2_UNIFIED)
     s_frameBoxTicks+=b3Ps2DeltaCpuCycles(phaseStart,b3Ps2ReadCpuCycles());
+    if(s_frame%240==0 && s_scene.kind>=8)
+        printf("BOX3D_VU1_FRAME,scene=%d,ready=%d,enabled=%d,boxes=%d\n",
+               s_scene.kind,s_vu1Ready,s_vu1Enabled,s_lastVu1Boxes);
 #endif
 #if defined(BOX3D_GS_KAWASE_DEBUG)
     b3GsKawaseDebugOverlay();
@@ -1435,7 +1504,7 @@ int main(void)
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
 #if defined(BOX3D_PS2_UNIFIED)
-    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off_legacy");
+    puts("BOX3D_PAD_EXTRA,UP=toggle_substeps_4_2,DOWN=toggle_vu0_0_5,SQUARE=shadow_pcss_pcf_hard_off_legacy,TRIANGLE=vu1_toggle");
 #endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
@@ -1461,6 +1530,10 @@ int main(void)
         puts("BOX3D_SAMPLE_FAIL,gs_initialization");
         for(;;) SleepThread();
     }
+#if defined(BOX3D_PS2_UNIFIED)
+    s_vu1Ready=b3Vu1BoxesInit();
+    if(!s_vu1Ready)puts("BOX3D_VU1_FALLBACK,reason=init");
+#endif
 #if defined(BOX3D_PS2_PAD_NAV)
     pad_nav_init();
 #endif
@@ -1540,7 +1613,7 @@ int main(void)
             if(s_perfSamples>=60)
             {
                 double divisor=294912.0*(double)s_perfSamples;
-                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_shadow_ms=%.3f,avg_box_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u,substeps=%d,vu0=%d,shadow_mode=%d\n",
+                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_shadow_ms=%.3f,avg_box_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u,substeps=%d,vu0=%d,shadow_mode=%d,vu1_enabled=%d,vu1_boxes=%d\n",
                        s_scene.kind,(unsigned long)s_frame,s_scene.count-1,
                        (double)s_sumPhysicsTicks/divisor,
                        (double)s_sumBuildTicks/divisor,
@@ -1552,7 +1625,8 @@ int main(void)
                                 s_sumGsTicks)/
                          (4915200.0*(double)s_perfSamples/100.0),
                        (double)s_lastVsyncMs,b3GsGetLastGifQwords(),
-                       s_simSubsteps,s_vu0Mode,s_shadowVisualMode);
+                       s_simSubsteps,s_vu0Mode,s_shadowVisualMode,
+                       s_vu1Ready&&s_vu1Enabled,s_lastVu1Boxes);
                 b3Counters counters=b3World_GetCounters(s_scene.world);
                 printf("BOX3D_PHYS_PROFILE,scene=%d,frame=%lu,substeps=%d,vu0=%d,pairs_ms=%.3f,collide_ms=%.3f,solve_ms=%.3f,constraints_ms=%.3f,contacts=%d,awake=%d\n",
                        s_scene.kind,(unsigned long)s_frame,
