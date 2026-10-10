@@ -54,6 +54,9 @@ typedef struct Scene
 
 static Scene s_scene;
 static uint32_t s_frame;
+#if defined(BOX3D_GS_PROGRESSIVE)
+static unsigned s_culledFaces, s_emittedFaces;
+#endif
 
 static b3GsPoint3 pt(float x,float y,float z)
 {
@@ -340,7 +343,11 @@ static void draw_box(const SceneBody* body)
                 s_scene.camera.eye.z-(float)center.z
             };
             if(n.x*toEye.x+n.y*toEye.y+n.z*toEye.z<=0.0f)
+            {
+                ++s_culledFaces;
                 continue;
+            }
+            ++s_emittedFaces;
 #endif
             float diffuse=n.x*light.x+n.y*light.y+n.z*light.z;
             if(diffuse<0)diffuse=0;
@@ -685,6 +692,10 @@ static void render_official_hud(void)
 #endif
 static void render(void)
 {
+#if defined(BOX3D_GS_PROGRESSIVE)
+    s_culledFaces=0;
+    s_emittedFaces=0;
+#endif
     b3GsBegin();
 #if defined(BOX3D_GS_OFFICIAL)
     // Frame layers: atmosphere -> textured-look floor -> contact shadows
@@ -767,6 +778,12 @@ int main(void)
         uint32_t physicsEnd=b3Ps2ReadCpuCycles();
 #endif
         render();
+#if defined(BOX3D_GS_PROGRESSIVE)
+        if(s_frame%120==0)
+            printf("BOX3D_GS_GEOMETRY,frame=%lu,culled_faces=%u,emitted_faces=%u,gif_qwords=%u,dma_submits=1\n",
+                   (unsigned long)s_frame,s_culledFaces,s_emittedFaces,
+                   b3GsGetLastGifQwords());
+#endif
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
         uint32_t frameEnd=b3Ps2ReadCpuCycles();
         if(s_frame%120==0)

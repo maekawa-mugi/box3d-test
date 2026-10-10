@@ -37,6 +37,7 @@ typedef struct B3GsQword { uint64_t data, reg; } B3GsQword;
 #endif
 static _Alignas(64) B3GsQword s_packet[B3_GS_QWORDS];
 static unsigned s_used;
+static unsigned s_lastGifQwords;
 static int s_framebuffer[2];
 static int s_back = 1;
 #if defined(BOX3D_GS_SOLID)
@@ -898,6 +899,10 @@ void b3GsOverlayText(int x,int y,const char* t,uint8_t r,uint8_t g,uint8_t b)
 {(void)x;(void)y;(void)t;(void)r;(void)g;(void)b;}
 #endif
 
+unsigned b3GsGetLastGifQwords(void)
+{
+    return s_lastGifQwords;
+}
 void b3GsPresent(void)
 {
     // One GIF PACKED tag (NREG=1, A+D), followed by raw 128b A+D pairs.
@@ -907,6 +912,7 @@ void b3GsPresent(void)
     if (s_errors) printf("BOX3D_GS_WARNING,packet_overflow=%d\n",s_errors);
     s_packet[0].data = GIF_SET_TAG(s_used - 1, 1, 0, 0, GIF_FLG_PACKED, 1);
     s_packet[0].reg = GIF_REG_AD;
+    s_lastGifQwords = s_used;
 
     // Clear GS FINISH (W1C), DMA sends cache-flushed packet and wait for
     // GS completion, not just DMA drain. Never write displayed framebuffer.

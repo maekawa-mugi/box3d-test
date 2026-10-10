@@ -50,6 +50,8 @@ void b3GsOverlayBegin(void);
 void b3GsOverlayPanel(int x,int y,int w,int h);
 void b3GsOverlayText(int x,int y,const char* text,uint8_t r,uint8_t g,uint8_t b);
 void b3GsPresent(void);
+// Actual GIF DMA packet length from the most recent completed frame.
+unsigned b3GsGetLastGifQwords(void);
 b3GsCamera b3GsLookAt(b3GsPoint3 eye, b3GsPoint3 target, float focal);
 
 #endif
