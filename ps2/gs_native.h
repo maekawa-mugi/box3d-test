@@ -35,6 +35,20 @@ typedef struct b3GsCamera {
     b3GsPoint3 eye, right, up, forward;
     float focal;
 } b3GsCamera;
+#if defined(BOX3D_PS2_UNIFIED)
+// Each box projects its eight shared vertices only once per frame,
+// instead of repeating three perspective divides for every triangle.
+typedef struct b3GsProjectedVertex {
+    int x, y, x16, y16;
+    uint32_t depth;
+} b3GsProjectedVertex;
+int b3GsProjectHull(b3GsCamera camera,const b3GsPoint3 vertices[8],
+                    b3GsProjectedVertex out[8]);
+void b3GsTriangleProjected(const b3GsProjectedVertex* a,
+                           const b3GsProjectedVertex* b,
+                           const b3GsProjectedVertex* c,
+                           uint8_t r,uint8_t g,uint8_t blue);
+#endif
 
 int b3GsInit(void);
 void b3GsBegin(void);

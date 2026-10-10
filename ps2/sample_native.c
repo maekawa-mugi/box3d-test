@@ -542,6 +542,10 @@ static void draw_box(const SceneBody* body)
     // The large static ground remains a wireframe to preserve the grid.
     if(body != &s_scene.objects[0])
     {
+#if defined(BOX3D_PS2_UNIFIED)
+        b3GsProjectedVertex screen[8];
+        int allProjected=b3GsProjectHull(s_scene.camera,verts,screen);
+#endif
         static const int faces[6][4]={
             {0,2,3,1}, {4,5,7,6}, {0,4,6,2},
             {1,3,7,5}, {0,1,5,4}, {2,6,7,3}
@@ -582,6 +586,17 @@ static void draw_box(const SceneBody* body)
             const uint8_t gg=(uint8_t)((float)body->g*shade);
             const uint8_t bb=(uint8_t)((float)body->b*shade);
             const int* quad=faces[face];
+#if defined(BOX3D_PS2_UNIFIED)
+            if(allProjected)
+            {
+                b3GsTriangleProjected(&screen[quad[0]],&screen[quad[1]],
+                                      &screen[quad[2]],rr,gg,bb);
+                b3GsTriangleProjected(&screen[quad[0]],&screen[quad[2]],
+                                      &screen[quad[3]],rr,gg,bb);
+                continue;
+            }
+#endif
+            // Robust near-plane clipped fallback for an exceptional box.
             b3GsTriangle3(s_scene.camera,verts[quad[0]],verts[quad[1]],
                           verts[quad[2]],rr,gg,bb);
             b3GsTriangle3(s_scene.camera,verts[quad[0]],verts[quad[2]],

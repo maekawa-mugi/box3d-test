@@ -295,3 +295,13 @@ rectangles still use the same deterministic lowest-index union root and
 one subtractive mask composite per connected component. Dense fully
 overlapping casters remain worst-case O(N^2); this is a broadphase
 optimization rather than a claim of strict linear complexity.
+
+## 2026-10-10: reusable projected GS box vertices
+
+A fully projectable box now perspective-transforms eight unique vertices
+once and reuses their GS 12.4 XY and Z values for both triangles of each
+visible face. This removes repeated camera-space dot products/divisions
+from solid-body draw packets. Any box containing near-clipped or
+out-of-extended-raster vertices falls back to the original clipped
+triangle path. Shadow geometry and physics remain unchanged.
+Before/after equivalence of real GS depth and frame times is unverified.

@@ -462,6 +462,45 @@ static int projectDepth(b3GsCamera c,b3GsPoint3 v,
 {
     return projectDepthPrecise(c,v,ox,oy,oz,NULL,NULL);
 }
+#if defined(BOX3D_PS2_UNIFIED)
+// This fast path is only valid when every box vertex is safely in front
+// of the near plane and inside the GS 12.4 extended raster bounds.
+// Near-clipped or otherwise exceptional boxes use b3GsTriangle3().
+int b3GsProjectHull(b3GsCamera camera,const b3GsPoint3 vertices[8],
+                    b3GsProjectedVertex out[8])
+{
+    for(int i=0;i<8;++i)
+    {
+        b3GsProjectedVertex* p=&out[i];
+        if(!projectDepthPrecise(camera,vertices[i],&p->x,&p->y,
+                                &p->depth,&p->x16,&p->y16))
+            return 0;
+        if(p->x16 < -4096 || p->y16 < -4096 ||
+           p->x16 > (B3_PS2_GS_W+256)*16 ||
+           p->y16 > (B3_PS2_GS_H+256)*16)
+            return 0;
+    }
+    return 1;
+}
+void b3GsTriangleProjected(const b3GsProjectedVertex* a,
+                           const b3GsProjectedVertex* b,
+                           const b3GsProjectedVertex* c,
+                           uint8_t r,uint8_t g,uint8_t blue)
+{
+    // Equivalent conservative screen rejection to Triangle3Raw.
+    if((a->x<0 && b->x<0 && c->x<0) ||
+       (a->x>=B3_PS2_GS_W && b->x>=B3_PS2_GS_W && c->x>=B3_PS2_GS_W) ||
+       (a->y<0 && b->y<0 && c->y<0) ||
+       (a->y>=B3_PS2_GS_H && b->y>=B3_PS2_GS_H && c->y>=B3_PS2_GS_H))
+        return;
+    if(s_used+6>=B3_GS_QWORDS) {++s_errors;return;}
+    b3GsAD(GS_SET_PRIM(3,0,0,0,0,0,0,0,0),GS_REG_PRIM);
+    b3GsAD(GS_SET_RGBAQ(r,g,blue,0x80,0x3f800000),GS_REG_RGBAQ);
+    b3GsAD(b3GsXYZDepthFixed(a->x16,a->y16,a->depth),GS_REG_XYZ2);
+    b3GsAD(b3GsXYZDepthFixed(b->x16,b->y16,b->depth),GS_REG_XYZ2);
+    b3GsAD(b3GsXYZDepthFixed(c->x16,c->y16,c->depth),GS_REG_XYZ2);
+}
+#endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 int b3GsProjectScreen(b3GsCamera c,b3GsPoint3 p,int* x,int* y)
 {
