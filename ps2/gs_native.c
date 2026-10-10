@@ -71,6 +71,12 @@ static int s_shadowPass;
 static int s_eighthMask[2];
 #endif
 static int s_shadowMask;
+#if defined(BOX3D_PS2_UNIFIED)
+// One disjoint 320x240 PSMCT32 target (physically 320x256), allocated
+// within the existing 4 MiB GS VRAM. Pre-filter distant PCSS silhouettes
+// here before the separable 3x3 final convolution.
+static int s_pcssPrefilter;
+#endif
 static int s_halfMask[2];
 static int s_quarterMask[2];
 #if defined(BOX3D_GS_PCSS_SHADOWS)
@@ -174,6 +180,16 @@ int b3GsInit(void)
         puts("BOX3D_GS_FAIL,pcf_mask_vram_allocation");
         return 0;
     }
+#if defined(BOX3D_PS2_UNIFIED)
+    s_pcssPrefilter=b3GsAllocatePageSurface(B3_KAWASE_HALF_W,
+                                             B3_KAWASE_HALF_H,GS_PSM_32);
+    if(s_pcssPrefilter<0)
+    {
+        puts("BOX3D_GS_FAIL,pcss_prefilter_vram");
+        return 0;
+    }
+    puts("BOX3D_GS_PCSS_PREFILTER,320x240,psmct32,327680bytes");
+#endif
 #else
     for(int i=0;i<2;++i)
     {
@@ -814,9 +830,24 @@ void b3GsShadowEnd(void)
     // receiver separation to choose a compact screen-space penumbra.
     // Nearby geometry keeps the proven 3x3 / 96 FIX pattern; distant
     // geometry uses a 5x5 binomial / ~98 FIX pattern (21 nonzero taps).
-    // The GS texture is FULL resolution and bilinear. No shadow-map
-    // depth comparisons or CPU pixel convolution occur in this path.
-    b3GsShadowCompositeSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H);
+    // GS bilinear PCF at contact. At larger gaps the raw binary
+    // silhouettes are first filtered by native GS 2:1 downsampling.
+    // This removes isolated jagged mask texels before radius sampling.
+#if defined(BOX3D_PS2_UNIFIED)
+    if(s_pcssRadius>1)
+    {
+        b3GsKawaseTarget(s_pcssPrefilter,B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
+        b3GsKawaseClear(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
+        b3GsKawaseSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H,0,0);
+        b3GsAD(GS_SET_ALPHA(0,2,2,1,128),GS_REG_ALPHA_1);
+        b3GsKawaseBlit(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
+                       B3_PS2_GS_W,B3_PS2_GS_H,0,0);
+        b3GsShadowCompositeSource(s_pcssPrefilter,
+                                  B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
+    }
+    else
+#endif
+        b3GsShadowCompositeSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H);
     b3GsPcssScissor();
     if(s_pcssRadius==1)
     {
@@ -837,6 +868,27 @@ void b3GsShadowEnd(void)
     }
     else
     {
+#if defined(BOX3D_PS2_UNIFIED)
+        // The 2:1 bilinear prefilter removes raw binary-edge ringing.
+        // Center-weighted 3x3 convolution is continuous (no 4-lobe
+        // sparse filter) and requires 9 taps instead of 21. The radius
+        // controls the output-space spread in pixel units. A single
+        // texel in the half source covers 2x2 output pixels.
+        int spread=s_pcssRadius-1;
+        for(int iy=-1;iy<=1;++iy)
+        for(int ix=-1;ix<=1;++ix)
+        {
+            int fix=(ix==0&&iy==0)?24:
+                    ((ix==0||iy==0)?12:6);
+            int dx=ix*spread,dy=iy*spread;
+            if(s_pcssMajorX)
+                dy=b3Ps2ShadowCompressMinor(dy);
+            else
+                dx=b3Ps2ShadowCompressMinor(dx);
+            b3GsShadowCompositeTap(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
+                                   dx,dy,fix);
+        }
+#else
         for(int iy=-2;iy<=2;++iy)
         for(int ix=-2;ix<=2;++ix)
         {
@@ -844,21 +896,14 @@ void b3GsShadowEnd(void)
             if(fix==0)continue;
             int dx=b3Ps2ShadowOffset5(ix,s_pcssRadius);
             int dy=b3Ps2ShadowOffset5(iy,s_pcssRadius);
-            // Projected directional light stretches the penumbra
-            // along the shadow direction instead of forming a round
-            // dark orb at the base of a tall narrow stack. Reduce the
-            // minor-axis offset without changing total kernel weight.
             if(s_pcssMajorX)
                 dy=b3Ps2ShadowCompressMinor(dy);
             else
                 dx=b3Ps2ShadowCompressMinor(dx);
-#if defined(BOX3D_PS2_UNIFIED)
-            b3GsShadowCompositeSmoothTap(dx,dy,ix,iy,fix);
-#else
             b3GsShadowCompositeTap(B3_PS2_GS_W,B3_PS2_GS_H,
                                    dx,dy,fix);
-#endif
         }
+#endif
     }
     // Next receiver, another caster, and the HUD all need full scissor.
     b3GsAD(GS_SET_SCISSOR(0,B3_PS2_GS_W-1,0,B3_PS2_GS_H-1),
