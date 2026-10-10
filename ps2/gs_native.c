@@ -240,9 +240,22 @@ static int projectDepth(b3GsCamera c,b3GsPoint3 v,int* ox,int* oy,
     float py=B3_PS2_GS_H*0.5f-c.focal*dot(d,c.up)/z;
     if (!isfinite(px)||!isfinite(py)||fabsf(px)>10000.0f||fabsf(py)>10000.0f) return 0;
     *ox=(int)px; *oy=(int)py;
-    // GS ZTEST=GREATER_EQUAL: near must be greater. 2^20 units/m.
-    // All valid depth values are positive; clear sprite uses Z=0.
+#if defined(BOX3D_GS_RECEIVER_SHADOWS)
+    // Critical for native GS perspective rasterization: GS interpolates
+    // vertex Z *linearly in screen space*. Camera-space distance 'z' is
+    // not linear after perspective division. Different triangulations
+    // of the SAME floor plane (checker tiles vs projected shadow hull)
+    // therefore failed Z tests intermittently with the old (220-z)
+    // mapping. Reciprocal 1/z IS linear across projected plane triangles.
+    // Inverted depth keeps ZTST=GEQUAL; clear remains Z=0. At near=0.5,
+    // the largest encoded depth is < 2^32. A 0.045m receiver-normal
+    // bias gives a small positive foreground offset.
+    *oz=(uint32_t)((1.0f/z - 1.0f/220.0f)*100000000.0f);
+#else
+    // Legacy verified wireframe / solid / official variants retain the
+    // previous depth mapping, for independent regression comparisons.
     *oz=(uint32_t)((220.0f-z)*1048576.0f);
+#endif
     return 1;
 }
 #if !defined(BOX3D_GS_SOLID)
