@@ -993,12 +993,14 @@ static void render_official_hud(void)
     // Display previous frame's measured utilization, NOT PCSX2 FPS
     // capped to 60 by VSync. Includes physics, GS packet build and
     // DMA/GS FINISH, excludes deliberate VSync idle time.
-    char meter[60];
-    snprintf(meter,sizeof(meter),"CPU %.1f  GPU %.1f  USE %.0f%%",
-             (double)(s_lastPhysicsMs+s_lastBuildMs),
+    char meter[64];
+    b3GsOverlayPanel(14,164,440,70);
+    snprintf(meter,sizeof(meter),"PHYS %.1f  DRAW %.1f",
+             (double)s_lastPhysicsMs,(double)s_lastBuildMs);
+    b3GsOverlayText(26,172,meter,245,239,185);
+    snprintf(meter,sizeof(meter),"GSWAIT %.1f  USE %.0f%%",
              (double)s_lastGpuMs,(double)s_lastWorkPct);
-    b3GsOverlayPanel(14,164,414,38);
-    b3GsOverlayText(26,176,meter,245,239,185);
+    b3GsOverlayText(26,202,meter,245,239,185);
 #else
     b3GsOverlayText(14,37,"GS PCSS HEIGHT",188,226,240);
     b3GsOverlayPanel(206,184,106,30);

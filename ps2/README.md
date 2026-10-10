@@ -36,9 +36,11 @@ spread.
 
 **PCF** is the *filtering operation inside PCSS*: at contact, four
 GS-bilinear taps implement a 3x3 separable tent with a 96-unit GS
-FIX total, while raised casters use a 21-nonzero-tap binomial kernel
-with symmetric half-texel bilinear sampling to soften jagged binary
-silhouette edges. This is native GS fixed-function post-filtering,
+FIX total. Raised casters now downsample their 640x480 coverage mask
+into an independently allocated 320x240 PSMCT32 GS target using
+hardware bilinear, then reconstruct a distance-dependent shadow
+with a connected nine-tap 3x3 tent kernel (96 FIX units). This smooths
+silhouette stair-stepping and avoids four widely separated blur lobes. This is native GS fixed-function post-filtering,
 not real shadow-depth-map PCSS blocker search.
 
 The prior top/bottom software-renderer corruption was fixed by
@@ -76,7 +78,7 @@ sample modules contain far more registrations; see
 
 ## Measure load even at 60fps
 
-The HUD shows `CPU`, `GPU`, and `USE`, estimated from EE CP0
+The HUD shows `PHYS`, `DRAW`, `GSWAIT`, and `USE`, estimated from EE CP0
 Count at nominal 294.912MHz. The CSV console logs every 60 frames:
 
 ```
@@ -121,3 +123,43 @@ To keep tier comparisons meaningful even after all boxes land, **body
 sleeping is disabled on stress pages only**. Regular eight demos retain
 Box3D's default sleeping. The CSV output reports rolling 60-frame
 average work and peak duration; screen HUD uses the last frame.
+
+## 2026-10-10 PCSX2 feedback and optimization
+
+Tester screenshots with PCSX2 D3D12 **software renderer** confirmed
+that the unified ELF ran: scene 11/12 had 256 bodies at about
+**20 fps**, with HUD CPU time near **38.3 ms** and USE near
+**231%**. Scene 12/12 had 400 bodies at about **12 fps**, CPU near
+**67.8 ms** and USE near **409%**. A thin tall caster's shadow
+showed noisy black streaks, but the prior top/bottom framebuffer
+artifacts were gone. These are **baseline screenshots before this
+optimization**, not new performance results. The HUD's prior
+`GPU 0.1/0.2` number was GS FINISH wait time in milliseconds,
+**not** GPU utilization; it has been renamed to `GSWAIT`.
+
+Two major repeated EE operations were removed in the unified build:
+- Cache each body position/rotation and eight world-space hull vertices
+  exactly once after `b3World_Step()`. Both the GS solid box renderer
+  and projected shadows reuse the same pose. Other macro combinations
+  retain their original code for regression isolation.
+- The PCSS classification pass now caches each caster's convex shadow
+  polygon and uses that polygon in the second pass, eliminating a
+  second hull projection/clip and converting each polygon fan vertex
+  only once. The physics body count, solver iterations and dynamic
+  contact behavior are unchanged.
+
+To improve **jagged** raised shadows, one physical GS 320x240 PSMCT32
+prefilter target is now allocated with page-height padding to 320x256
+(327,680 bytes). For PCSS radius 2..5, hardware bilinear downsamples
+the full-res silhouette before a nine-tap 3x3 tent (sum FIX=96) with
+radius-dependent offsets. At radius 1 the proven four-bilinear-tap
+full-res PCF remains unchanged. The unified scene's four GS surfaces
+and prefilter occupy **3,522,560 of 4,194,304 bytes**, leaving
+**671,744 bytes**. There is no new ELF and no new CPU per-pixel blur.
+
+The updated on-screen panel shows `PHYS` and `DRAW` separately and
+calls the DMA/FINISH metric `GSWAIT`, so an EE Box3D solver bottleneck
+can be distinguished from geometry/GIF command generation.
+**Neither the FPS gain nor the new shadow softness is yet validated
+in PCSX2**. Compare the before/after same 256/400-body pages and
+capture `BOX3D_PERF` for quantitative results.
