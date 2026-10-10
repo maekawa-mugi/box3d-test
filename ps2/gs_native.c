@@ -83,6 +83,21 @@ static uint64_t b3GsXYZ(int x, int y)
 {
     return b3GsXYZDepth(x,y,0);
 }
+#if defined(BOX3D_GS_PROGRESSIVE)
+// 12.4 GS XY inputs retain the entire 1/16-pixel raster coordinate.
+// Converting to integer pixels before GS_SET_XYZ defeated subpixel
+// coverage, particularly obvious on sloped edges at 640x480.
+static uint64_t b3GsXYZDepthFixed(int x16,int y16,uint32_t depth)
+{
+    return GS_SET_XYZ((uint16_t)((2048<<4)+x16),
+                      (uint16_t)((2048<<4)+y16),depth);
+}
+static int b3GsSubpixel(float v)
+{
+    float x=v*16.0f;
+    return (int)(x+(x>=0.0f?0.5f:-0.5f));
+}
+#endif
 
 static void b3GsAD(uint64_t data, uint64_t reg)
 {
@@ -239,7 +254,8 @@ void b3GsBegin(void)
 
 static void b3GsLineWithDepth(int x0,int y0,uint32_t z0,
                               int x1,int y1,uint32_t z1,
-                              uint8_t r,uint8_t g,uint8_t b)
+                              uint8_t r,uint8_t g,uint8_t b,
+                              int fx0,int fy0,int fx1,int fy1)
 {
     // Reject wholly offscreen segments; clip very large projected
     // coordinates into the GS's representable 12.4 XY range.
@@ -255,14 +271,38 @@ static void b3GsLineWithDepth(int x0,int y0,uint32_t z0,
     if (y1 < -256) y1 = -256;
     if (y0 > B3_PS2_GS_H+256) y0 = B3_PS2_GS_H+256;
     if (y1 > B3_PS2_GS_H+256) y1 = B3_PS2_GS_H+256;
-    b3GsAD(GS_SET_PRIM(1, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
+#if defined(BOX3D_GS_PROGRESSIVE)
+    // GS PRIM.AA1 anti-aliases LINES (not filled triangle edges).
+    // GS PRIM.ABE and source-over ALPHA use the line coverage alpha.
+    b3GsAD(GS_SET_ALPHA(0,1,0,1,0),GS_REG_ALPHA_1);
+    b3GsAD(GS_SET_PRIM(1,0,0,0,1,1,0,0,0),GS_REG_PRIM);
+#else
+    b3GsAD(GS_SET_PRIM(1,0,0,0,0,0,0,0,0),GS_REG_PRIM);
+#endif
     b3GsAD(GS_SET_RGBAQ(r, g, b, 0x80, 0x3f800000), GS_REG_RGBAQ);
-    b3GsAD(b3GsXYZDepth(x0, y0, z0), GS_REG_XYZ2);
-    b3GsAD(b3GsXYZDepth(x1, y1, z1), GS_REG_XYZ2);
+#if defined(BOX3D_GS_PROGRESSIVE)
+    // Clamp the subpixel coordinates whenever the coarse pixel coords
+    // were clamped to a representable GS range.
+    if((fx0>>4)<-256)fx0=-256*16;
+    if((fx1>>4)<-256)fx1=-256*16;
+    if((fy0>>4)<-256)fy0=-256*16;
+    if((fy1>>4)<-256)fy1=-256*16;
+    if((fx0>>4)>B3_PS2_GS_W+256)fx0=(B3_PS2_GS_W+256)*16;
+    if((fx1>>4)>B3_PS2_GS_W+256)fx1=(B3_PS2_GS_W+256)*16;
+    if((fy0>>4)>B3_PS2_GS_H+256)fy0=(B3_PS2_GS_H+256)*16;
+    if((fy1>>4)>B3_PS2_GS_H+256)fy1=(B3_PS2_GS_H+256)*16;
+    b3GsAD(b3GsXYZDepthFixed(fx0,fy0,z0),GS_REG_XYZ2);
+    b3GsAD(b3GsXYZDepthFixed(fx1,fy1,z1),GS_REG_XYZ2);
+#else
+    (void)fx0;(void)fy0;(void)fx1;(void)fy1;
+    b3GsAD(b3GsXYZDepth(x0,y0,z0),GS_REG_XYZ2);
+    b3GsAD(b3GsXYZDepth(x1,y1,z1),GS_REG_XYZ2);
+#endif
 }
 void b3GsLine(int x0, int y0, int x1, int y1, uint8_t r, uint8_t g, uint8_t b)
 {
-    b3GsLineWithDepth(x0,y0,0,x1,y1,0,r,g,b);
+    b3GsLineWithDepth(x0,y0,0,x1,y1,0,r,g,b,
+                      x0<<4,y0<<4,x1<<4,y1<<4);
 }
 
 static b3GsPoint3 sub(b3GsPoint3 a, b3GsPoint3 b)
@@ -299,8 +339,8 @@ b3GsCamera b3GsLookAt(b3GsPoint3 eye, b3GsPoint3 target, float focal)
     return c;
 }
 
-static int projectDepth(b3GsCamera c,b3GsPoint3 v,int* ox,int* oy,
-                        uint32_t* oz)
+static int projectDepthPrecise(b3GsCamera c,b3GsPoint3 v,int* ox,int* oy,
+                               uint32_t* oz,int* ox16,int* oy16)
 {
     b3GsPoint3 d=sub(v,c.eye);
     float z=dot(d,c.forward);
@@ -309,6 +349,12 @@ static int projectDepth(b3GsCamera c,b3GsPoint3 v,int* ox,int* oy,
     float py=B3_PS2_GS_H*0.5f-c.focal*dot(d,c.up)/z;
     if (!isfinite(px)||!isfinite(py)||fabsf(px)>10000.0f||fabsf(py)>10000.0f) return 0;
     *ox=(int)px; *oy=(int)py;
+#if defined(BOX3D_GS_PROGRESSIVE)
+    if(ox16)*ox16=b3GsSubpixel(px);
+    if(oy16)*oy16=b3GsSubpixel(py);
+#else
+    (void)ox16;(void)oy16;
+#endif
 #if defined(BOX3D_GS_RECEIVER_SHADOWS)
     // Critical for native GS perspective rasterization: GS interpolates
     // vertex Z *linearly in screen space*. Camera-space distance 'z' is
@@ -332,6 +378,11 @@ static int projectDepth(b3GsCamera c,b3GsPoint3 v,int* ox,int* oy,
 #endif
     return 1;
 }
+static int projectDepth(b3GsCamera c,b3GsPoint3 v,
+                        int* ox,int* oy,uint32_t* oz)
+{
+    return projectDepthPrecise(c,v,ox,oy,oz,NULL,NULL);
+}
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 int b3GsProjectScreen(b3GsCamera c,b3GsPoint3 p,int* x,int* y)
 {
@@ -353,12 +404,23 @@ void b3GsLine3(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
     int x0,y0,x1,y1;
 #if defined(BOX3D_GS_SOLID)
     uint32_t z0,z1;
-    if (projectDepth(c,a,&x0,&y0,&z0) &&
-        projectDepth(c,b,&x1,&y1,&z1))
+    int fx0=0,fy0=0,fx1=0,fy1=0;
+    if (projectDepthPrecise(c,a,&x0,&y0,&z0,&fx0,&fy0) &&
+        projectDepthPrecise(c,b,&x1,&y1,&z1,&fx1,&fy1))
     {
-        // Small positive bias: wire outlines remain visible over filled
-        // triangles instead of flickering at near-equal Z.
-        b3GsLineWithDepth(x0,y0,z0+4096,x1,y1,z1+4096,r,g,blue);
+#if defined(BOX3D_GS_PROGRESSIVE)
+        // The previous +4096 bias was written for Z32. On 16-bit Z
+        // it pushed *every floor grid line* in front of the platform,
+        // making the opaque slab look transparent. Use just one depth
+        // quantization unit for a restrained polygon-offset.
+        const uint32_t bias=1u;
+        z0=z0<65535u-bias?z0+bias:65535u;
+        z1=z1<65535u-bias?z1+bias:65535u;
+#else
+        z0+=4096u;z1+=4096u;
+#endif
+        b3GsLineWithDepth(x0,y0,z0,x1,y1,z1,r,g,blue,
+                          fx0,fy0,fx1,fy1);
     }
 #else
     if (project(c,a,&x0,&y0) && project(c,b,&x1,&y1))
@@ -371,10 +433,11 @@ static void b3GsTriangle3Raw(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
 {
 #if defined(BOX3D_GS_SOLID)
     int x0,y0,x1,y1,x2,y2;
+    int fx0=0,fy0=0,fx1=0,fy1=0,fx2=0,fy2=0;
     uint32_t z0,z1,z2;
-    if (!projectDepth(c,a,&x0,&y0,&z0) ||
-        !projectDepth(c,b,&x1,&y1,&z1) ||
-        !projectDepth(c,d,&x2,&y2,&z2)) return;
+    if (!projectDepthPrecise(c,a,&x0,&y0,&z0,&fx0,&fy0) ||
+        !projectDepthPrecise(c,b,&x1,&y1,&z1,&fx1,&fy1) ||
+        !projectDepthPrecise(c,d,&x2,&y2,&z2,&fx2,&fy2)) return;
 
     // Avoid huge triangles crossing the near plane; full clipping will
     // be added after this independent GS bring-up succeeds.
@@ -412,9 +475,25 @@ static void b3GsTriangle3Raw(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
     b3GsAD(GS_SET_PRIM(3, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
     b3GsAD(GS_SET_RGBAQ(r,g,blue,0x80,0x3f800000),GS_REG_RGBAQ);
 #endif
+#if defined(BOX3D_GS_PROGRESSIVE)
+    // GS 12.4 precision is independent of the coarse-screen bounds
+    // above; keep all fractional screen-space bits for every vertex.
+    if(fx0< -4096)fx0=-4096; if(fx1< -4096)fx1=-4096; if(fx2< -4096)fx2=-4096;
+    if(fy0< -4096)fy0=-4096; if(fy1< -4096)fy1=-4096; if(fy2< -4096)fy2=-4096;
+    if(fx0>(B3_PS2_GS_W+256)*16)fx0=(B3_PS2_GS_W+256)*16;
+    if(fx1>(B3_PS2_GS_W+256)*16)fx1=(B3_PS2_GS_W+256)*16;
+    if(fx2>(B3_PS2_GS_W+256)*16)fx2=(B3_PS2_GS_W+256)*16;
+    if(fy0>(B3_PS2_GS_H+256)*16)fy0=(B3_PS2_GS_H+256)*16;
+    if(fy1>(B3_PS2_GS_H+256)*16)fy1=(B3_PS2_GS_H+256)*16;
+    if(fy2>(B3_PS2_GS_H+256)*16)fy2=(B3_PS2_GS_H+256)*16;
+    b3GsAD(b3GsXYZDepthFixed(fx0,fy0,z0),GS_REG_XYZ2);
+    b3GsAD(b3GsXYZDepthFixed(fx1,fy1,z1),GS_REG_XYZ2);
+    b3GsAD(b3GsXYZDepthFixed(fx2,fy2,z2),GS_REG_XYZ2);
+#else
     b3GsAD(b3GsXYZDepth(x0,y0,z0),GS_REG_XYZ2);
     b3GsAD(b3GsXYZDepth(x1,y1,z1),GS_REG_XYZ2);
     b3GsAD(b3GsXYZDepth(x2,y2,z2),GS_REG_XYZ2);
+#endif
 #else
     (void)c;(void)a;(void)b;(void)d;(void)r;(void)g;(void)blue;
 #endif
