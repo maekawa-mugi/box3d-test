@@ -169,8 +169,9 @@ static int pad_nav_poll(void)
                     (s_vu1Budget==8)?B3_VU1_MAX_BOXES:0;
         if(s_vu1Budget==-5)s_vu1BootAttempted=0;
         ++s_trianglePressCount;
-        printf("BOX3D_PAD_TRIANGLE,press=%u,stage=%d,ready=%d\n",
-               s_trianglePressCount,s_vu1Budget,s_vu1Ready);
+        printf("BOX3D_PAD_TRIANGLE,press=%u,stage=%d,ready=%d,status=%s,scene=%d\n",
+               s_trianglePressCount,s_vu1Budget,s_vu1Ready,
+               b3Vu1BoxesStatus(),s_scene.kind);
     }
     if(pressed&PAD_SQUARE)
     {
@@ -1297,8 +1298,10 @@ static void render_official_hud(void)
     b3GsOverlayText(28,24,"BOX3D PS2 480P",239,245,247);
     b3GsOverlayText(28,53,sceneNames[s_scene.kind],189,214,223);
     char page[48];
-    const int vuMode=(s_vu1Ready && s_scene.kind>=8)?
-                      s_vu1Budget:0;
+    // Always show the selected diagnostic stage, even when VU1 failed
+    // during initialization. Previously 'ready == 0' masked ALL
+    // controller interactions as "VU1 EE SAFE".
+    const int vuMode=s_vu1Budget;
     static const char* const vuStageLabel[]={
         "VU1 ACK","VU1 PATH3","VU1 VIF","VU1 BOOT ARM",
         "VU1 BOOT","VU1 VUONLY"
@@ -1335,8 +1338,8 @@ static void render_official_hud(void)
     // Unambiguous controller acknowledgement. This panel is still
     // visible in the EE-only first diagnostic stage, even if a later
     // VIF1 stage deadlocks before the next Present().
-    b3GsOverlayPanel(374,14,252,114);
-    b3GsOverlayText(390,26,"TRIANGLE INPUT",255,233,116);
+    b3GsOverlayPanel(374,14,252,132);
+    b3GsOverlayText(390,26,"TRIANGLE VU1R3",255,233,116);
     char padInfo[40];
     snprintf(padInfo,sizeof(padInfo),"PRESS %u",
              s_trianglePressCount);
@@ -1355,6 +1358,15 @@ static void render_official_hud(void)
     }
     else
         b3GsOverlayText(390,82,"VU1 EE SAFE",180,244,180);
+    // Never disguise an unavailable VU1 as the "EE SAFE" stage.
+    // This text is visible without any button press.
+    const char* status=b3Vu1BoxesStatus();
+    if(!s_vu1Ready)
+        b3GsOverlayText(390,110,status,255,139,130);
+    else if(s_scene.kind<8)
+        b3GsOverlayText(390,110,"BENCH SCENE ONLY",209,219,241);
+    else
+        b3GsOverlayText(390,110,status,155,243,176);
     // Display previous frame's measured utilization, NOT PCSX2 FPS
     // capped to 60 by VSync. Includes physics, GS packet build and
     // DMA/GS FINISH, excludes deliberate VSync idle time.
@@ -1636,6 +1648,8 @@ int main(void)
     }
 #if defined(BOX3D_PS2_UNIFIED)
     s_vu1Ready=b3Vu1BoxesInit();
+    printf("BOX3D_VU1_STARTUP,ready=%d,status=%s\n",
+           s_vu1Ready,b3Vu1BoxesStatus());
     if(!s_vu1Ready)puts("BOX3D_VU1_FALLBACK,reason=init");
     puts("BOX3D_VU1_SAFE_DEFAULT,ee_geometry=1,triangle=ack_path3_vif_arm_boot_vu_kick");
 #endif

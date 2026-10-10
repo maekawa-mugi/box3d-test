@@ -34,6 +34,8 @@ static _Alignas(64) uint64_t s_gifTag[2];
 static b3GsCamera s_currentCamera;
 static int s_count;
 static int s_ready;
+static const char* s_status="VU1 NOT INIT";
+const char* b3Vu1BoxesStatus(void) {return s_status;}
 static int s_emitToGs;
 static unsigned s_mainProgramPc;
 static unsigned s_submissionCount;
@@ -61,6 +63,7 @@ int b3Vu1BoxesInit(void)
         {1,3,7,5},{0,1,5,4},{2,6,7,3}
     };
     s_ready=0;
+    s_status="VU1 INIT";
     s_count=0;
     // VU1 microprogram has a two-instruction E-bit boot stub at PC=0,
     // followed by the full transform code. Compute the latter's PC
@@ -71,6 +74,7 @@ int b3Vu1BoxesInit(void)
     {
         printf("BOX3D_VU1_FAIL,entry_alignment,delta=%lu\n",
                (unsigned long)(main-start));
+        s_status="VU1 FAIL ENTRY";
         return 0;
     }
     s_mainProgramPc=(unsigned)((main-start)/8u);
@@ -78,6 +82,7 @@ int b3Vu1BoxesInit(void)
     if(dma_channel_initialize(DMA_CHANNEL_VIF1,NULL,0)<0)
     {
         puts("BOX3D_VU1_FAIL,init_vif1");
+        s_status="VU1 FAIL VIF INIT";
         return 0;
     }
     s_vifPacket=packet2_create(B3_VU1_VIF_QWORDS,P2_TYPE_NORMAL,
@@ -88,6 +93,7 @@ int b3Vu1BoxesInit(void)
     {
         if(startup)packet2_free(startup);
         puts("BOX3D_VU1_FAIL,packet_allocation");
+        s_status="VU1 FAIL ALLOC";
         return 0;
     }
     packet2_vif_add_micro_program(startup,0,
@@ -101,6 +107,7 @@ int b3Vu1BoxesInit(void)
     if(startupWait<0)
     {
         puts("BOX3D_VU1_FAIL,microcode_upload_timeout");
+        s_status="VU1 FAIL MPG DMA";
         return 0;
     }
 
@@ -114,6 +121,7 @@ int b3Vu1BoxesInit(void)
     {
         printf("BOX3D_VU1_FAIL,microcode_size,bytes=%lu\n",
                (unsigned long)imageBytes);
+        s_status="VU1 FAIL MPG SIZE";
         return 0;
     }
     const volatile u32* vuCode=(const volatile u32*)VU1_MICROMEM1_START;
@@ -130,6 +138,7 @@ int b3Vu1BoxesInit(void)
             printf("BOX3D_VU1_FAIL,mpg_readback,word=%u,want=%08x,got=%08x,vif_code=%08x,vif_stat=%08x\n",
                    i,(unsigned)image[i],(unsigned)received,
                    (unsigned)VIF1_CODE,(unsigned)VIF1_STAT);
+            s_status="VU1 FAIL READBACK";
             return 0;
         }
     }
@@ -163,9 +172,11 @@ int b3Vu1BoxesInit(void)
     if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
     {
         puts("BOX3D_VU1_FAIL,static_data_upload_timeout");
+        s_status="VU1 FAIL STATIC";
         return 0;
     }
     s_ready=1;
+    s_status="VU1 READY";
     puts("BOX3D_VU1_READY,vif1_dma=1,vu1_micro=1,xgkick=1,triangles_per_box=12");
     return 1;
 }
@@ -271,6 +282,7 @@ int b3Vu1BoxesUploadTest(b3GsCamera camera)
     if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
     {
         puts("BOX3D_VU1_FAIL,vif_only_timeout");
+        s_status="VU1 FAIL VIF DMA";
         s_ready=0;
         return 0;
     }
@@ -302,6 +314,7 @@ int b3Vu1BoxesBootTest(void)
         printf("BOX3D_VU1_FAIL,boot_mscal_timeout,vif_stat=%08x,vif_err=%08x,vif_code=%08x\n",
                (unsigned)VIF1_STAT,(unsigned)VIF1_ERR,
                (unsigned)VIF1_CODE);
+        s_status="VU1 FAIL BOOT";
         s_ready=0;
         return 0;
     }
@@ -358,6 +371,7 @@ int b3Vu1BoxesSubmit(void)
     if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
     {
         puts("BOX3D_VU1_FAIL,vif1_dma_timeout");
+        s_status="VU1 FAIL SUBMIT";
         s_ready=0;
         return -1;
     }

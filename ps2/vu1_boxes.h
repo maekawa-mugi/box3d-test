@@ -15,6 +15,9 @@ typedef struct b3Vu1BoxInput
 // Initialize once, after the GS has initialized its GIF channel.
 // Returns zero if packet2/VIF1 could not initialize.
 int b3Vu1BoxesInit(void);
+// Short, stable ASCII status for the HUD. Unlike ready flag, also
+// describes why init failed (MPG readback, alignment, DMA, etc.).
+const char* b3Vu1BoxesStatus(void);
 // emitToGs=0 runs full VU1 transform/assembly but skips XGKICK.
 // Diagnostic output must still be drawn through the EE fallback.
 void b3Vu1BoxesBegin(b3GsCamera camera,int emitToGs);

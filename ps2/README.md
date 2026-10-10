@@ -580,3 +580,33 @@ or `BOX3D_VU1_PHASE` log. If the emulator returns to the BIOS
 browser, check PCSX2 logs for EE exception details too. The root
 cause is still open until microcode upload / MSCAL completes in PCSX2.
 D0 and PCSS remain unchanged.
+
+## 2026-10-10: TRIANGLE stuck at EE SAFE
+
+The demo HUD incorrectly showed `VU1 EE SAFE` after every triangle
+press whenever either `s_vu1Ready == 0` or `scene.kind < 8`,
+even though the controller handler DID advance the stage counter.
+The previous MPG readback preflight could have disabled VU1, but
+`EE SAFE` alone cannot prove this; a non-benchmark scene has the
+same symptom.
+
+The HUD now **always displays the selected stage** and the number of
+TRIANGLE presses independent of VU1 readiness, and prints a separate
+diagnostic status. The upper-right title `TRIANGLE VU1R3` identifies
+this build. Status is one of `VU1 READY`, `BENCH SCENE ONLY`,
+`VU1 FAIL ENTRY`, `VU1 FAIL VIF INIT`, `VU1 FAIL ALLOC`,
+`VU1 FAIL MPG DMA`, `VU1 FAIL MPG SIZE`,
+`VU1 FAIL READBACK`, `VU1 FAIL STATIC`,
+or a relevant runtime DMA/BOOT failure. The same value appears
+in `BOX3D_VU1_STARTUP` and `BOX3D_PAD_TRIANGLE` console lines.
+Controller stages remain visible when initialization fails, but
+actual VU1 execution stays disabled: **do not bypass a failed
+microcode readback to make the stage advance**.
+
+For reproduction, load the newest ELF and confirm `TRIANGLE VU1R3`
+in the upper-right panel. Note whether `PRESS` increases on each
+fresh triangle press, and copy the status text below the stage
+label. An absent PRESS increment means an input/new-ELF issue.
+A `VU1 FAIL ...` status means initialization was rejected before
+any BOOT attempt. `BENCH SCENE ONLY` means switch to a
+BENCH 64/144/256/400 page before attempting VU1.
