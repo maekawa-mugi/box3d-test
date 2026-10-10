@@ -7,6 +7,9 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 PS2DEV=${PS2DEV:-/usr/local/ps2dev}
 PS2SDK=${PS2SDK:-$PS2DEV/ps2sdk}
+# Make the default PS2DEV layout work even without a preconfigured PATH.
+PATH="$PS2DEV/ee/bin:$PATH"
+export PATH PS2DEV PS2SDK
 CC=${CC:-mips64r5900el-ps2-elf-gcc}
 NM=${NM:-mips64r5900el-ps2-elf-nm}
 READELF=${READELF:-mips64r5900el-ps2-elf-readelf}
@@ -16,9 +19,26 @@ BUILD=${BUILD:-$ROOT/build/ps2-ee}
 
 die() { printf 'PS2 BUILD ERROR: %s\n' "$*" >&2; exit 1; }
 
-for tool in "$CC" "$NM" "$READELF" "$CMAKE" ninja; do
+for tool in "$CC" "$NM" "$READELF" "$CMAKE"; do
     command -v "$tool" >/dev/null 2>&1 || die "Missing executable: $tool"
 done
+
+# Prefer Ninja if present, otherwise use GNU Make. Allow overrides through
+# CMAKE_GENERATOR, and pass the exact build-program path to CMake.
+if [ -n "${CMAKE_GENERATOR:-}" ]; then
+    GENERATOR=$CMAKE_GENERATOR
+elif command -v ninja >/dev/null 2>&1; then
+    GENERATOR=Ninja
+else
+    GENERATOR='Unix Makefiles'
+fi
+case "$GENERATOR" in
+    Ninja) BUILD_PROGRAM=$(command -v ninja || true) ;;
+    'Unix Makefiles') BUILD_PROGRAM=$(command -v make || true) ;;
+    *) die "Unsupported CMAKE_GENERATOR '$GENERATOR' (choose Ninja or Unix Makefiles)" ;;
+esac
+[ -n "$BUILD_PROGRAM" ] || die "No build program for $GENERATOR; install ninja or make"
+echo "PS2 build generator: $GENERATOR ($BUILD_PROGRAM)"
 case "$("$CC" -dumpmachine)" in
     *r5900*) ;;
     *) die "Refusing non-R5900 compiler: $("$CC" -dumpmachine)" ;;
@@ -29,7 +49,8 @@ esac
 
 # The native PS2SDK executable, not a PS2 Linux userspace program, can read
 # privileged CP0 Count. Avoid reusing any host build directory or archive.
-"$CMAKE" -S "$ROOT" -B "$BUILD" -G Ninja \
+"$CMAKE" -S "$ROOT" -B "$BUILD" -G "$GENERATOR" \
+    -DCMAKE_MAKE_PROGRAM="$BUILD_PROGRAM" \
     -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/ps2-ee.cmake" \
     -DBOX3D_PS2=ON -DCMAKE_BUILD_TYPE=Release
 "$CMAKE" --build "$BUILD" --target box3d
