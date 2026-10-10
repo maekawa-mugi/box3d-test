@@ -262,7 +262,7 @@ static void b3GsLineWithDepth(int x0,int y0,uint32_t z0,
     if ((x0 < -64 && x1 < -64) || (x0 > B3_PS2_GS_W + 64 && x1 > B3_PS2_GS_W + 64) ||
         (y0 < -64 && y1 < -64) || (y0 > B3_PS2_GS_H + 64 && y1 > B3_PS2_GS_H + 64))
         return;
-    if (s_used + 5 >= B3_GS_QWORDS) { ++s_errors; return; }
+    if (s_used + 6 >= B3_GS_QWORDS) { ++s_errors; return; }
     if (x0 < -256) x0 = -256;
     if (x1 < -256) x1 = -256;
     if (x0 > B3_PS2_GS_W+256) x0 = B3_PS2_GS_W+256;
@@ -827,7 +827,13 @@ void b3GsShadowEnd(void)
     // Upsample/Kawase blur: quarter -> half, separate VRAM page.
     b3GsKawasePass(s_halfMask[1],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
                    s_quarterMask[1],B3_KAWASE_QUARTER_W,
-                   B3_KAWASE_QUARTER_H,7,6,2);
+                   B3_KAWASE_QUARTER_H,7,6,
+#if defined(BOX3D_GS_KAWASE_WIDE)
+                   1
+#else
+                   2
+#endif
+                   );
     // Optional refinement ping-pong at half resolution.
     b3GsKawasePass(s_halfMask[0],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
                    s_halfMask[1],B3_KAWASE_HALF_W,
@@ -840,6 +846,28 @@ void b3GsShadowEnd(void)
     // yielded only 64, so a sparse RAW mask disappeared after filtering.
     // RGB coverage rather than alpha controls blend opacity.
     b3GsKawaseTarget(s_framebuffer[s_back],B3_PS2_GS_W,B3_PS2_GS_H);
+#if defined(BOX3D_GS_KAWASE_WIDE)
+    // Mix a SHARP full-resolution shadow mask with a small amount of
+    // the eighth-level extended Kawase, preserving contact edges.
+    // Without this, a 1/8-res texture dominates the scene and the
+    // shadow spreads far past the projected caster, especially at 480p.
+    // Raw FIX=72 + 4 wide taps FIX=6 = 96 total (same as 3x3 PCF).
+    // GS subtractive RGB blend, no extra VRAM or pass buffers.
+    b3GsKawaseSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H,9,8);
+    b3GsAD(GS_SET_ALPHA(2,0,2,1,72),GS_REG_ALPHA_1);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
+                   B3_PS2_GS_W,B3_PS2_GS_H,0,0);
+    b3GsKawaseSource(s_halfMask[0],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,8,7);
+    b3GsAD(GS_SET_ALPHA(2,0,2,1,6),GS_REG_ALPHA_1);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
+                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,-1,-1);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
+                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H, 1,-1);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
+                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,-1, 1);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
+                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H, 1, 1);
+#else
     b3GsKawaseSource(s_halfMask[0],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,8,7);
     b3GsAD(GS_SET_ALPHA(2,0,2,1,28),GS_REG_ALPHA_1);
     b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
@@ -850,6 +878,7 @@ void b3GsShadowEnd(void)
                    B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,-2, 2);
     b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
                    B3_KAWASE_HALF_W,B3_KAWASE_HALF_H, 2, 2);
+#endif
 #endif
     // Restore the depth test before drawing another receiver or the
     // dynamic boxes. The shadow mask itself must not alter scene depth.
