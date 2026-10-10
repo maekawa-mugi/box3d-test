@@ -31,6 +31,7 @@ static _Alignas(64) uint64_t s_gifTag[2];
 static b3GsCamera s_currentCamera;
 static int s_count;
 static int s_ready;
+static int s_emitToGs;
 static unsigned s_submissionCount;
 // PS2SDK dma_channel_wait(timeout=0) never terminates on a stalled VIF.
 // The finite timeout is an emergency diagnostic, not a hardware recovery.
@@ -125,6 +126,7 @@ int b3Vu1BoxesInit(void)
 void b3Vu1BoxesBegin(b3GsCamera c,int emitToGs)
 {
     s_count=0;
+    s_emitToGs=(emitToGs!=0);
     s_currentCamera=c;
     // VU output formula matches projectDepthPrecise(): 12.4 XY and
     // reversed Z16 with 1/z linear in screen space.
@@ -208,6 +210,25 @@ int b3Vu1BoxesAdd(const b3GsPoint3 corners[8],
     return 1;
 }
 
+int b3Vu1BoxesUploadTest(b3GsCamera camera)
+{
+    if(!s_ready)return 0;
+    b3Vu1BoxesBegin(camera,0);
+    packet2_reset(s_vifPacket,0);
+    packet2_utils_vu_add_unpack_data(s_vifPacket,0,s_camera,7,0);
+    packet2_utils_vu_add_end_tag(s_vifPacket);
+    puts("BOX3D_VU1_PHASE,vif_only_dma_start");
+    dma_channel_send_packet2(s_vifPacket,DMA_CHANNEL_VIF1,1);
+    if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    {
+        puts("BOX3D_VU1_FAIL,vif_only_timeout");
+        s_ready=0;
+        return 0;
+    }
+    puts("BOX3D_VU1_PHASE,vif_only_dma_done");
+    return 1;
+}
+
 int b3Vu1BoxesSubmit(void)
 {
     if(!s_ready || s_count==0)return 0;
@@ -228,7 +249,10 @@ int b3Vu1BoxesSubmit(void)
         // the same 256..328 output qwords. This barrier lives on VIF1,
         // so the EE does not poll every box.
         packet2_chain_open_cnt(s_vifPacket,0,0,0);
-        packet2_vif_flusha(s_vifPacket,0);
+        if(s_emitToGs)
+            packet2_vif_flusha(s_vifPacket,0);
+        else
+            packet2_vif_flushe(s_vifPacket,0);
         packet2_vif_nop(s_vifPacket,0);
         packet2_vif_nop(s_vifPacket,0);
         packet2_vif_nop(s_vifPacket,0);
@@ -237,7 +261,10 @@ int b3Vu1BoxesSubmit(void)
     packet2_chain_open_cnt(s_vifPacket,0,0,0);
     // FLUSHA is a GIF PATH1 completion barrier. The following EE GIF
     // HUD packet cannot overtake VU1 XGKICK data.
-    packet2_vif_flusha(s_vifPacket,0);
+    if(s_emitToGs)
+        packet2_vif_flusha(s_vifPacket,0);
+    else
+        packet2_vif_flushe(s_vifPacket,0);
     packet2_vif_nop(s_vifPacket,0);
     packet2_vif_nop(s_vifPacket,0);
     packet2_vif_nop(s_vifPacket,0);

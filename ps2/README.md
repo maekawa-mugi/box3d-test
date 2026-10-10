@@ -490,3 +490,32 @@ prints `BOX3D_VU1_PHASE,before_path3_flush` with `emit=0/1`,
 Copy the **last line printed before blackout** to identify the stalled
 operation. A finite DMA wait alone cannot repair a locked VU1 or GS.
 D0 is the default, and the PCSS filtering is untouched.
+
+## 2026-10-10: visible TRIANGLE confirmation and black-screen isolation
+
+D0 is still the safe EE-only default. The upper-right HUD always shows
+`TRIANGLE INPUT`, the number of accepted presses (`PRESS 0`, `PRESS 1`,
+etc.) and a stage label. This makes controller recognition visible
+**before any VU DMA is attempted**, rather than immediately freezing
+on the first TRIANGLE press.
+
+On a stress scene, repeated TRIANGLE presses select:
+
+| Display | Work performed | Expected picture |
+| --- | --- | --- |
+| VU1 EE SAFE | Normal EE-only rendering | Normal |
+| VU1 ACK | Button/HUD confirmation only | Normal |
+| VU1 PATH3 | Flush existing GS PATH3 packet early, no VIF1 work | Normal |
+| VU1 VIF | Same PATH3 flush plus VIF1 UNPACK of camera (no MSCAL) | Normal |
+| VU1 VUONLY | Execute one-box VU1 transform, no XGKICK; EE also draws box | Normal unless VU stalls |
+| VU1 BOX 1 | VU1 emits one box by XGKICK | Must visually test |
+| VU1 BOX 8 | VU1 emits eight boxes by XGKICK | Must visually test |
+| VU1 BOX 400 | VU1 emits up to 400 boxes | Must visually test |
+
+This separates controller handling, GS finish barrier, DMA source
+transfer, microprogram execution, and GIF PATH1 into different stages.
+The VIF-only mode requires `BOX3D_VU1_PHASE,vif_only_dma_done` in the
+PCSX2 console. The VU-only mode selects `VIF_FLUSHE`, not `FLUSHA`,
+because there is no GIF PATH1 output to drain. This is a diagnostic
+change, not evidence that VU1 drawing now works. Stop at the first
+stage that freezes and report the last `BOX3D_VU1_PHASE` message.
