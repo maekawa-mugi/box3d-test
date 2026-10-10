@@ -149,10 +149,32 @@ for symbol in main b3World_Step b3GsSkyGradient b3GsTriangle3 b3GsShadowBegin b3
         die "Official-style GS sample missing symbol: $symbol"
 done
 
+# Explicit GS Z-tested clipped box silhouette / receiver shadow test ELF.
+# The prior official-looking executable remains intact for direct A/B.
+SHADOW_SAMPLE_OUT=${SHADOW_SAMPLE_OUT:-$ROOT/ps2/box3d_ps2_samples_shadows.elf}
+"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
+    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
+    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 \
+    -DBOX3D_GS_RECEIVER_SHADOWS=1 \
+    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
+    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
+    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
+    "$ROOT/ps2/shadow_project.c" "$LIB" \
+    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$SHADOW_SAMPLE_OUT"
+"$READELF" -h "$SHADOW_SAMPLE_OUT" | grep -q 'Machine:.*MIPS' ||
+    die "Projected shadow sample is not a MIPS ELF"
+"$READELF" -h "$SHADOW_SAMPLE_OUT" | grep -q 'Type:.*EXEC' ||
+    die "Projected shadow sample is not an executable ELF"
+for symbol in main b3World_Step b3GsTriangle3 b3GsShadowBegin b3ShadowProjectBox b3GsPresent; do
+    "$NM" --defined-only "$SHADOW_SAMPLE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
+        die "Projected shadow sample missing: $symbol"
+done
+
 printf 'PS2 BUILD OK: %s\n' "$OUT"
 printf 'PS2 BENCH BUILD OK: %s\n' "$BENCH_OUT"
 printf 'PS2 NATIVE GS SAMPLES OK: %s\n' "$SAMPLE_OUT"
 printf 'PS2 NATIVE GS SOLID SAMPLES OK: %s\n' "$SOLID_SAMPLE_OUT"
 printf 'PS2 OFFICIAL-STYLE GS SAMPLES OK: %s\n' "$OFFICIAL_SAMPLE_OUT"
+printf 'PS2 CLIPPED PROJECTED SHADOW SAMPLES OK: %s\n' "$SHADOW_SAMPLE_OUT"
 printf 'Target: %s\n' "$("$CC" -dumpmachine)"
 printf 'Run this ELF in PCSX2 or on PS2 and record BOX3D_STAGE / PASS / FAIL.\n'

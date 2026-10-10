@@ -9,6 +9,9 @@
 #include "box3d/box3d.h"
 #include "box3d/math_functions.h"
 #include "gs_native.h"
+#if defined(BOX3D_GS_RECEIVER_SHADOWS)
+#include "shadow_project.h"
+#endif
 
 #include <kernel.h>
 #include <math.h>
@@ -337,6 +340,107 @@ static void render_shadows(void)
     b3GsShadowEnd();
 }
 
+
+#if defined(BOX3D_GS_RECEIVER_SHADOWS)
+// The physical receiver surfaces are the floor, and optionally the
+// rotated incline. Shadow projection and convex clipping are portable
+// and covered by ps2/shadow_project_test.c.
+static b3ShadowVec3 shadowVec(b3Vec3 v)
+{
+    return (b3ShadowVec3){v.x,v.y,v.z};
+}
+static b3ShadowVec3 shadowPt(b3Pos p)
+{
+    return (b3ShadowVec3){(float)p.x,(float)p.y,(float)p.z};
+}
+static b3GsPoint3 toPoint3(b3ShadowVec3 v)
+{
+    return pt(v.x,v.y,v.z);
+}
+
+static b3ShadowReceiver makeReceiver(int index)
+{
+    const SceneBody* body=&s_scene.objects[index];
+    b3Quat rotation=b3Body_GetRotation(body->id);
+    b3ShadowReceiver p;
+    p.axisU=shadowVec(b3RotateVector(rotation,(b3Vec3){1,0,0}));
+    p.axisV=shadowVec(b3RotateVector(rotation,(b3Vec3){0,0,1}));
+    p.normal=shadowVec(b3RotateVector(rotation,(b3Vec3){0,1,0}));
+    p.origin=shadowPt(b3Body_GetPosition(body->id));
+    // Ground top and inclined platform upper surface are at +half.y.
+    p.origin.x+=p.normal.x*body->half.y;
+    p.origin.y+=p.normal.y*body->half.y;
+    p.origin.z+=p.normal.z*body->half.y;
+    p.halfU=body->half.x;
+    p.halfV=body->half.z;
+    // Checkered floor is only generated on [-24,24] in world X/Z.
+    if(index==0)
+    {
+        p.halfU=fminf(p.halfU,24.0f);
+        p.halfV=fminf(p.halfV,24.0f);
+    }
+    return p;
+}
+static void cornersForBody(const SceneBody* body,b3ShadowVec3 out[8])
+{
+    b3Pos origin=b3Body_GetPosition(body->id);
+    b3Quat q=b3Body_GetRotation(body->id);
+    for(int v=0;v<8;++v)
+    {
+        b3Vec3 local={
+            (v&1)?body->half.x:-body->half.x,
+            (v&2)?body->half.y:-body->half.y,
+            (v&4)?body->half.z:-body->half.z
+        };
+        b3Vec3 world=b3RotateVector(q,local);
+        out[v]=(b3ShadowVec3){
+            (float)origin.x+world.x,
+            (float)origin.y+world.y,
+            (float)origin.z+world.z
+        };
+    }
+}
+static void render_receiver_shadows(void)
+{
+    // Same directional-light orientation as the face lighting.
+    const b3ShadowVec3 direction={-0.44f,-0.82f,-0.36f};
+    const int receiverCount=s_scene.kind==1?2:1;
+
+    // Render shadows AFTER opaque bodies, using the actual receiver Z
+    // already in GS ZBUF. Shadow pass sets ZMSK=1 and source-over alpha;
+    // only the visible top face of each receiver may be darkened.
+    b3GsShadowBegin();
+    for(int receiver=0;receiver<receiverCount;++receiver)
+    {
+        b3ShadowReceiver plane=makeReceiver(receiver);
+        for(int caster=1;caster<s_scene.count;++caster)
+        {
+            if(caster==receiver)continue;
+            b3ShadowVec3 corners[8];
+            b3ShadowPolygon poly;
+            cornersForBody(&s_scene.objects[caster],corners);
+            if(b3ShadowProjectBox(corners,direction,&plane,&poly)<3)
+                continue;
+
+            // A single convex silhouette fan, rather than overlapping
+            // top/bottom-face quads. This prevents alpha over-darkening
+            // within one box's shadow and missing rotated silhouettes.
+            b3ShadowVec3 w0=b3ShadowOnReceiver(poly.vertices[0],&plane,0.045f);
+            b3GsPoint3 p0=toPoint3(w0);
+            for(int t=1;t+1<poly.count;++t)
+            {
+                b3GsPoint3 p1=toPoint3(
+                    b3ShadowOnReceiver(poly.vertices[t],&plane,0.045f));
+                b3GsPoint3 p2=toPoint3(
+                    b3ShadowOnReceiver(poly.vertices[t+1],&plane,0.045f));
+                b3GsTriangle3(s_scene.camera,p0,p1,p2,39,48,56);
+            }
+        }
+    }
+    b3GsShadowEnd();
+}
+#endif
+
 static void render_official_hud(void)
 {
     const char* sceneNames[]={"BOX STACK","INCLINED PLANE","SPINNING BOOKS"};
@@ -356,8 +460,13 @@ static void render(void)
     // -> lit rigid bodies -> scene panel. Native GS GIF A+D throughout.
     b3GsSkyGradient();
     render_ground();
+#if defined(BOX3D_GS_RECEIVER_SHADOWS)
+    for(int i=1;i<s_scene.count;++i) draw_box(&s_scene.objects[i]);
+    render_receiver_shadows();
+#else
     render_shadows();
     for(int i=1;i<s_scene.count;++i) draw_box(&s_scene.objects[i]);
+#endif
     render_official_hud();
 #else
     // Shared ground-plane axes and grid, useful as a motion reference.
