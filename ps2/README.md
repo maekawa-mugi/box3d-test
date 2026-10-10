@@ -774,3 +774,32 @@ remains safe, and PCSS/physics remain unchanged.
 
 This is a diagnostics/safety change, not a claim that MSCAL,
 the transform microprogram, or XGKICK now works.
+
+## 2026-10-10: VU1R5 normal-DMA replacement for INIT BIOS resets
+
+The user's PCSX2 log confirmed that INIT ARM completes, but attempting
+VU1 INIT results in a BIOS restart. This revision replaces the former
+packet2 DMA chain REF/TTE MPG uploader with a contiguous VIF1 **normal
+DMA** packet containing NOP/MPG/instruction payload/FLUSHE. The initial
+static UNPACK packet uses normal DMA as well. Both are prebuilt and
+size-checked before VIF1 is touched. Large per-box chain buffers are
+allocated only after VERIFY succeeds.
+
+Reason: an implicit packet2 assertion or malformed REF/TTE chain was
+one plausible explanation for the earlier `# Restart.` log, which
+did not include an EE faulting PC. This is a replacement of that
+potentially failing upload path, **not yet a confirmed root-cause fix**.
+The normal-DMA VIF packet format is independently checked over all
+even sizes from 2 to 2048 microinstructions by a host test:
+
+```sh
+cc -std=c17 -Wall -Wextra -Werror -Ips2 ps2/vu1_vif_stream_test.c -o /tmp/box3d_vif_test
+/tmp/box3d_vif_test
+```
+
+EE-only startup still initializes neither VIF1 nor VU1.
+Follow the VU1R5 sequence and stop at INIT (4 presses) first.
+A successful INIT displays `VU1 MPG UPLOADED`; VERIFY is still
+required before any MSCAL or XGKICK. If INIT again returns to BIOS,
+collect the EE stdout plus PCSX2 log to identify whether the last
+line is `mpg_normal_dma_begin` or `mpg_normal_dma_done`.

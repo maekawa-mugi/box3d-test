@@ -5,6 +5,7 @@
 // directly to GS through GIF PATH1. PCSS always executes earlier on PATH3.
 #include "vu1_boxes.h"
 #include "vu1_memory_map.h"
+#include "vu1_vif_stream.h"
 
 #include <dma.h>
 #include <gif_tags.h>
@@ -26,7 +27,9 @@ extern u32 B3Vu1Boxes_CodeStart __attribute__((section(".vudata")));
 extern u32 B3Vu1Boxes_CodeEnd __attribute__((section(".vudata")));
 extern u32 B3Vu1Boxes_RunStart __attribute__((section(".vudata")));
 
-enum { B3_VU1_VIF_QWORDS=8192, B3_VU1_CODE_QWORDS=256 };
+enum { B3_VU1_VIF_QWORDS=8192, B3_VU1_CODE_WORDS=4608 };
+static _Alignas(64) uint32_t s_mpgStream[B3_VU1_CODE_WORDS];
+static _Alignas(64) uint32_t s_staticStream[160];
 static packet2_t* s_vifPacket;
 static _Alignas(64) b3Vu1BoxInput s_upload[B3_VU1_MAX_BOXES];
 static _Alignas(64) float s_camera[7][4];
@@ -68,62 +71,31 @@ int b3Vu1BoxesInit(void)
     s_microUploaded=0;
     s_status="VU1 INIT";
     s_count=0;
-    // VU1 microprogram has a two-instruction E-bit boot stub at PC=0,
-    // followed by the full transform code. Compute the latter's PC
-    // from DVP linker symbols, rather than assuming assembly layout.
-    uintptr_t start=(uintptr_t)&B3Vu1Boxes_CodeStart;
-    uintptr_t main=(uintptr_t)&B3Vu1Boxes_RunStart;
-    if(main<start || (main-start)!=16u)
+    const uintptr_t start=(uintptr_t)&B3Vu1Boxes_CodeStart;
+    const uintptr_t run=(uintptr_t)&B3Vu1Boxes_RunStart;
+    const uintptr_t end=(uintptr_t)&B3Vu1Boxes_CodeEnd;
+    if(run<start || run-start!=16u || end<=start ||
+       end-start>16384u || ((end-start)&15u)!=0u)
     {
-        printf("BOX3D_VU1_FAIL,entry_alignment,delta=%lu\n",
-               (unsigned long)(main-start));
-        s_status="VU1 FAIL ENTRY";
+        printf("BOX3D_VU1_FAIL,microcode_layout,entry_delta=%lu,code_bytes=%lu\n",
+               (unsigned long)(run-start),(unsigned long)(end-start));
+        s_status="VU1 FAIL LAYOUT";
         return 0;
     }
-    s_mainProgramPc=(unsigned)((main-start)/8u);
-    // The PS2SDK VU1 example uses the same VIF1+packet2 APIs.
-    if(dma_channel_initialize(DMA_CHANNEL_VIF1,NULL,0)<0)
-    {
-        puts("BOX3D_VU1_FAIL,init_vif1");
-        s_status="VU1 FAIL VIF INIT";
-        return 0;
-    }
-    s_vifPacket=packet2_create(B3_VU1_VIF_QWORDS,P2_TYPE_NORMAL,
-                               P2_MODE_CHAIN,1);
-    packet2_t* startup=packet2_create(B3_VU1_CODE_QWORDS,
-                                      P2_TYPE_NORMAL,P2_MODE_CHAIN,1);
-    if(!s_vifPacket || !startup)
-    {
-        if(startup)packet2_free(startup);
-        puts("BOX3D_VU1_FAIL,packet_allocation");
-        s_status="VU1 FAIL ALLOC";
-        return 0;
-    }
-    packet2_vif_add_micro_program(startup,0,
-                                 &B3Vu1Boxes_CodeStart,
-                                 &B3Vu1Boxes_CodeEnd);
-    // PS2SDK MPG is sent using DMA REF tags. A completed DMAC
-    // channel alone is not sufficient to establish that VIF1 has
-    // executed its final MPG opcode. Place FLUSHE after all MPG
-    // data so VIF1 drains its command stream before EE readback.
-    packet2_chain_open_cnt(startup,0,0,0);
-    packet2_vif_flushe(startup,0);
-    packet2_vif_nop(startup,0);
-    packet2_vif_nop(startup,0);
-    packet2_vif_nop(startup,0);
-    packet2_chain_close_tag(startup);
-    packet2_utils_vu_add_end_tag(startup);
-    dma_channel_send_packet2(startup,DMA_CHANNEL_VIF1,1);
-    int startupWait=dma_channel_wait(DMA_CHANNEL_VIF1,
-                                     B3_VU1_DMA_WAIT_LIMIT);
-    packet2_free(startup);
-    if(startupWait<0)
-    {
-        puts("BOX3D_VU1_FAIL,microcode_upload_timeout");
-        s_status="VU1 FAIL MPG DMA";
-        return 0;
-    }
+    s_mainProgramPc=(unsigned)((run-start)/8u);
 
+    // Avoid packet2 chain REF/TTE and its assertion/exit paths for MPG.
+    // A contiguous, aligned VIF stream is sent by normal DMA. The entire
+    // stream is fully constructed and bounds-checked before touching VIF1.
+    const size_t mpgWords=b3Vu1BuildMpgStream(
+        s_mpgStream,B3_VU1_CODE_WORDS,
+        &B3Vu1Boxes_CodeStart,(end-start)/8u);
+    if(!mpgWords || (mpgWords&3u))
+    {
+        puts("BOX3D_VU1_FAIL,mpg_stream_layout");
+        s_status="VU1 FAIL MPG PACK";
+        return 0;
+    }
     int k=0;
     for(int face=0;face<6;++face)
     {
@@ -138,29 +110,45 @@ int b3Vu1BoxesInit(void)
             ++k;
         }
     }
-    // GIF PACKED RGBAQ + XYZ2. Packed XYZ2 accepts a float4 storing
-    // 32-bit integer X,Y,Z in x,y,z. Low 16 bits of XY are GS 12.4,
-    // Z is a 32-bit integer (the scene framebuffer uses PSMZ16).
     s_gifTag[0]=GIF_SET_TAG(36,1,1,3,GIF_FLG_PACKED,2);
     s_gifTag[1]=(uint64_t)GIF_REG_RGBAQ |
                 ((uint64_t)GIF_REG_XYZ2<<4);
-    packet2_reset(s_vifPacket,0);
-    packet2_utils_vu_add_unpack_data(s_vifPacket,128,s_indices,36,0);
-    packet2_utils_vu_add_unpack_data(s_vifPacket,256,s_gifTag,1,0);
-    packet2_utils_vu_add_end_tag(s_vifPacket);
-    dma_channel_send_packet2(s_vifPacket,DMA_CHANNEL_VIF1,1);
-    if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    const size_t staticWords=b3Vu1BuildStaticStream(
+        s_staticStream,160,s_indices,s_gifTag);
+    if(staticWords!=160u)
     {
-        puts("BOX3D_VU1_FAIL,static_data_upload_timeout");
+        puts("BOX3D_VU1_FAIL,static_stream_layout");
+        s_status="VU1 FAIL STATIC PACK";
+        return 0;
+    }
+    if(dma_channel_initialize(DMA_CHANNEL_VIF1,NULL,0)<0)
+    {
+        puts("BOX3D_VU1_FAIL,init_vif1");
+        s_status="VU1 FAIL VIF INIT";
+        return 0;
+    }
+    printf("BOX3D_VU1_PHASE,mpg_normal_dma_begin,qwords=%u\n",
+           (unsigned)(mpgWords/4u));
+    if(dma_channel_send_normal(DMA_CHANNEL_VIF1,s_mpgStream,
+                               (int)(mpgWords/4u),0,0)<0 ||
+       dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    {
+        puts("BOX3D_VU1_FAIL,mpg_normal_dma_timeout");
+        s_status="VU1 FAIL MPG DMA";
+        return 0;
+    }
+    puts("BOX3D_VU1_PHASE,mpg_normal_dma_done");
+    if(dma_channel_send_normal(DMA_CHANNEL_VIF1,s_staticStream,
+                               (int)(staticWords/4u),0,0)<0 ||
+       dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    {
+        puts("BOX3D_VU1_FAIL,static_normal_dma_timeout");
         s_status="VU1 FAIL STATIC";
         return 0;
     }
-    // VIF1 received MPG and static DMEM data. Do not read the VU1
-    // microcode EE mapping until the user explicitly selects VERIFY.
-    // This lets a BIOS reset be attributed to upload or readback.
     s_microUploaded=1;
     s_status="VU1 MPG UPLOADED";
-    puts("BOX3D_VU1_UPLOAD,mpg_dma_done=1,readback_pending=1");
+    puts("BOX3D_VU1_UPLOAD,normal_dma=1,mpg_done=1,static_done=1,readback_pending=1");
     return 1;
 }
 
@@ -232,6 +220,17 @@ int b3Vu1BoxesVerify(void)
     puts("BOX3D_VU1_IMAGE,mpg_dma_readback=ok");
     puts("BOX3D_VU1_IMAGE,readback=ok");
 
+    // The large DMA-chain packet for per-box geometry is allocated only
+    // after MPG readback succeeds. It is not needed by the INIT stage.
+    if(!s_vifPacket)
+        s_vifPacket=packet2_create(B3_VU1_VIF_QWORDS,P2_TYPE_NORMAL,
+                                   P2_MODE_CHAIN,1);
+    if(!s_vifPacket)
+    {
+        puts("BOX3D_VU1_FAIL,geometry_packet_allocation");
+        s_status="VU1 FAIL ALLOC";
+        return 0;
+    }
     s_ready=1;
     s_status="VU1 READY DMA";
     puts("BOX3D_VU1_READY,vif1_dma=1,vu1_micro=1,xgkick=1,triangles_per_box=12,micro_cpu_fallback=disabled");
