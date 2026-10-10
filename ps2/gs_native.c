@@ -466,20 +466,22 @@ static int projectDepth(b3GsCamera c,b3GsPoint3 v,
 // This fast path is only valid when every box vertex is safely in front
 // of the near plane and inside the GS 12.4 extended raster bounds.
 // Near-clipped or otherwise exceptional boxes use b3GsTriangle3().
+int b3GsProjectPoint(b3GsCamera camera,b3GsPoint3 vertex,
+                     b3GsProjectedVertex* p)
+{
+    if(!projectDepthPrecise(camera,vertex,&p->x,&p->y,
+                            &p->depth,&p->x16,&p->y16))
+        return 0;
+    // Out-of-range vertices require the original clipping path.
+    return p->x16>=-4096 && p->y16>=-4096 &&
+           p->x16<=(B3_PS2_GS_W+256)*16 &&
+           p->y16<=(B3_PS2_GS_H+256)*16;
+}
 int b3GsProjectHull(b3GsCamera camera,const b3GsPoint3 vertices[8],
                     b3GsProjectedVertex out[8])
 {
     for(int i=0;i<8;++i)
-    {
-        b3GsProjectedVertex* p=&out[i];
-        if(!projectDepthPrecise(camera,vertices[i],&p->x,&p->y,
-                                &p->depth,&p->x16,&p->y16))
-            return 0;
-        if(p->x16 < -4096 || p->y16 < -4096 ||
-           p->x16 > (B3_PS2_GS_W+256)*16 ||
-           p->y16 > (B3_PS2_GS_H+256)*16)
-            return 0;
-    }
+        if(!b3GsProjectPoint(camera,vertices[i],&out[i]))return 0;
     return 1;
 }
 void b3GsTriangleProjected(const b3GsProjectedVertex* a,
@@ -495,7 +497,11 @@ void b3GsTriangleProjected(const b3GsProjectedVertex* a,
         return;
     if(s_used+6>=B3_GS_QWORDS) {++s_errors;return;}
     b3GsAD(GS_SET_PRIM(3,0,0,0,0,0,0,0,0),GS_REG_PRIM);
-    b3GsAD(GS_SET_RGBAQ(r,g,blue,0x80,0x3f800000),GS_REG_RGBAQ);
+    // The same projected-triangle fast path serves solids and coverage
+    // masks. Shadows must write constant RGB=128 into the 32-bit mask.
+    b3GsAD(GS_SET_RGBAQ(s_shadowPass?128:r,s_shadowPass?128:g,
+                        s_shadowPass?128:blue,0x80,0x3f800000),
+           GS_REG_RGBAQ);
     b3GsAD(b3GsXYZDepthFixed(a->x16,a->y16,a->depth),GS_REG_XYZ2);
     b3GsAD(b3GsXYZDepthFixed(b->x16,b->y16,b->depth),GS_REG_XYZ2);
     b3GsAD(b3GsXYZDepthFixed(c->x16,c->y16,c->depth),GS_REG_XYZ2);

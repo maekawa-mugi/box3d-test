@@ -804,6 +804,8 @@ static void cornersForBody(const SceneBody* body,b3ShadowVec3 out[8])
 // Avoid repeating Box3D body transforms + convex hull/clip work for
 // every accepted box. Static EE BSS prevents large stack frames.
 static b3ShadowPolygon s_shadowProjectedCache[MAX_BOXES];
+static b3GsProjectedVertex s_shadowScreenCache[MAX_BOXES][B3_SHADOW_MAX_VERTS];
+static unsigned char s_shadowScreenValid[MAX_BOXES];
 static b3Ps2ShadowBounds s_shadowBounds[MAX_BOXES];
 static b3Ps2ShadowBounds s_shadowUnions[MAX_BOXES];
 static int s_shadowParents[MAX_BOXES];
@@ -862,6 +864,7 @@ static void render_receiver_shadows(int receiver)
         if(b3ShadowProjectBox(corners,direction,&plane,&poly)<3)
             continue;
         s_shadowProjectedCache[caster]=poly;
+        s_shadowScreenValid[caster]=0;
         b3Ps2ShadowBounds* b=&s_shadowBounds[caster];
         b->valid=1;
         ++projected;
@@ -885,17 +888,18 @@ static void render_receiver_shadows(int receiver)
         {
             b3ShadowVec3 point=
                 b3ShadowOnReceiver(poly.vertices[v],&plane,0.045f);
-            int x,y;
-            if(!b3GsProjectScreen(s_scene.camera,toPoint3(point),&x,&y))
+            b3GsProjectedVertex* vtx=&s_shadowScreenCache[caster][v];
+            if(!b3GsProjectPoint(s_scene.camera,toPoint3(point),vtx))
             {
                 allProjected=0;
                 break;
             }
-            if(x<b->x0)b->x0=x;
-            if(y<b->y0)b->y0=y;
-            if(x>b->x1)b->x1=x;
-            if(y>b->y1)b->y1=y;
+            if(vtx->x<b->x0)b->x0=vtx->x;
+            if(vtx->y<b->y0)b->y0=vtx->y;
+            if(vtx->x>b->x1)b->x1=vtx->x;
+            if(vtx->y>b->y1)b->y1=vtx->y;
         }
+        s_shadowScreenValid[caster]=(unsigned char)allProjected;
         if(!allProjected)
         {
             // A clipped near-plane polygon is conservatively fullscreen
@@ -923,15 +927,30 @@ static void render_receiver_shadows(int receiver)
             if(s_shadowParents[caster]!=root)continue;
             const b3ShadowPolygon* poly=&s_shadowProjectedCache[caster];
             if(poly->count<3)continue;
-            b3GsPoint3 hull[B3_SHADOW_MAX_VERTS];
-            for(int v=0;v<poly->count;++v)
-                hull[v]=toPoint3(
-                    b3ShadowOnReceiver(poly->vertices[v],&plane,0.045f));
-            for(int t=1;t+1<poly->count;++t)
+            if(s_shadowScreenValid[caster])
             {
-                b3GsTriangle3(s_scene.camera,hull[0],hull[t],
-                              hull[t+1],39,48,56);
-                ++triangles;
+                // No repeated screen transforms of each fan vertex.
+                const b3GsProjectedVertex* screen=s_shadowScreenCache[caster];
+                for(int t=1;t+1<poly->count;++t)
+                {
+                    b3GsTriangleProjected(&screen[0],&screen[t],
+                                          &screen[t+1],39,48,56);
+                    ++triangles;
+                }
+            }
+            else
+            {
+                // Exceptional near-plane polygons retain robust clipping.
+                b3GsPoint3 hull[B3_SHADOW_MAX_VERTS];
+                for(int v=0;v<poly->count;++v)
+                    hull[v]=toPoint3(
+                        b3ShadowOnReceiver(poly->vertices[v],&plane,0.045f));
+                for(int t=1;t+1<poly->count;++t)
+                {
+                    b3GsTriangle3(s_scene.camera,hull[0],hull[t],
+                                  hull[t+1],39,48,56);
+                    ++triangles;
+                }
             }
         }
         b3GsShadowEnd();

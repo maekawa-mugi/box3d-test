@@ -42,6 +42,8 @@ typedef struct b3GsProjectedVertex {
     int x, y, x16, y16;
     uint32_t depth;
 } b3GsProjectedVertex;
+int b3GsProjectPoint(b3GsCamera camera,b3GsPoint3 vertex,
+                     b3GsProjectedVertex* out);
 int b3GsProjectHull(b3GsCamera camera,const b3GsPoint3 vertices[8],
                     b3GsProjectedVertex out[8]);
 void b3GsTriangleProjected(const b3GsProjectedVertex* a,

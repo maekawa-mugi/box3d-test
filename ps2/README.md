@@ -327,3 +327,15 @@ The GSWAIT metric is an elapsed DMA/FINISH wait, not GPU utilization.
 The host scalar smoke workflow additionally compiles/runs PCSS geometry,
 union, blur-tier and VRAM allocation regressions. Cross-compilation and
 actual R5900/GS pixel output still require PS2DEV/PCSX2.
+
+## 2026-10-10: reusable projected shadow silhouette vertices
+
+The PCSS classification stage now caches projected GS XY12.4/Z for
+every valid clipped shadow polygon vertex, then emits its triangle fan
+directly from those cached screen vertices. This avoids repeatedly
+dividing/projecting the same fan vertices in the second shadow pass.
+Projection failures retain the previous per-triangle near-plane-clipped
+path. The projected-triangle helper also preserves constant RGB=128
+coverage when rendering into the shadow mask rather than a solid box.
+This remains an EE-side optimization; a real VU1/VIF transform pipeline
+is separate, and still unimplemented/unverified.
