@@ -402,6 +402,119 @@ void b3GsSkyGradient(void)
     b3GsSkyBand(104,B3_PS2_GS_H,155,188,206,227,222,207);
 }
 
+#if defined(BOX3D_GS_KAWASE_SHADOWS)
+
+// Each offscreen pass changes GS FRAME_1 and SCISSOR_1, never the CRT.
+// Full-size shadow mask uses the *existing* ZBUF and scene depth;
+// the two smaller pyramid levels use no depth testing.
+static void b3GsKawaseTarget(int vram,int width,int height)
+{
+    b3GsAD(GS_SET_FRAME(vram>>11,(width+63)>>6,GS_PSM_32,0),
+           GS_REG_FRAME_1);
+    b3GsAD(GS_SET_SCISSOR(0,width-1,0,height-1),GS_REG_SCISSOR_1);
+    b3GsAD(GS_SET_TEST(0,0,0,0,0,0,0,0),GS_REG_TEST_1);
+}
+static void b3GsKawaseClear(int width,int height)
+{
+    b3GsAD(GS_SET_PRIM(6,0,0,0,0,0,0,0,0),GS_REG_PRIM);
+    b3GsAD(GS_SET_RGBAQ(0,0,0,0,0x3f800000),GS_REG_RGBAQ);
+    b3GsAD(b3GsXYZ(0,0),GS_REG_XYZ2);
+    b3GsAD(b3GsXYZ(width,height),GS_REG_XYZ2);
+}
+
+// GS bilinear texture source; never read and render into the same VRAM
+// buffer in one pass. TEXFLUSH invalidates GS texture cache on each pass.
+// Region clamp avoids sampling the undefined padded TBW/TW/TH texels.
+static void b3GsKawaseSource(int vram,int width,int height,
+                             int tw,int th)
+{
+    b3GsAD(GS_SET_TEXFLUSH(0),GS_REG_TEXFLUSH);
+    b3GsAD(GS_SET_TEX0_SMALL(vram>>6,(width+63)>>6,GS_PSM_32,
+                              tw,th,1,1),GS_REG_TEX0_1);
+    b3GsAD(GS_SET_TEX1(1,0,1,1,0,0,0),GS_REG_TEX1_1);
+    b3GsAD(GS_SET_CLAMP(2,2,0,width-1,0,height-1),GS_REG_CLAMP_1);
+    b3GsAD(GS_SET_RGBAQ(128,128,128,128,0x3f800000),GS_REG_RGBAQ);
+}
+// Source UVs are nonnegative (14-bit unsigned), while dest XY may shift
+// in either direction. Shifting the destination achieves the four
+// symmetrically offset Kawase taps with GS scissor handling boundaries.
+static void b3GsKawaseBlit(int targetW,int targetH,int srcW,int srcH,
+                           int shiftX,int shiftY)
+{
+    b3GsAD(GS_SET_PRIM(6,0,1,0,1,0,1,0,0),GS_REG_PRIM);
+    b3GsAD(GS_SET_UV(8,8),GS_REG_UV);
+    b3GsAD(b3GsXYZ(shiftX,shiftY),GS_REG_XYZ2);
+    b3GsAD(GS_SET_UV((srcW<<4)+8,(srcH<<4)+8),GS_REG_UV);
+    b3GsAD(b3GsXYZ(targetW+shiftX,targetH+shiftY),GS_REG_XYZ2);
+}
+static void b3GsKawasePass(int target,int targetW,int targetH,
+                           int source,int sourceW,int sourceH,
+                           int sourceTw,int sourceTh,int radius)
+{
+    b3GsKawaseTarget(target,targetW,targetH);
+    b3GsKawaseClear(targetW,targetH);
+    b3GsKawaseSource(source,sourceW,sourceH,sourceTw,sourceTh);
+    // Add source RGB / 4 for each of four offset sprites. The color
+    // coverage is averaged correctly even though GS alpha is not.
+    b3GsAD(GS_SET_ALPHA(0,2,2,1,32),GS_REG_ALPHA_1);
+    b3GsKawaseBlit(targetW,targetH,sourceW,sourceH,-radius,-radius);
+    b3GsKawaseBlit(targetW,targetH,sourceW,sourceH, radius,-radius);
+    b3GsKawaseBlit(targetW,targetH,sourceW,sourceH,-radius, radius);
+    b3GsKawaseBlit(targetW,targetH,sourceW,sourceH, radius, radius);
+}
+void b3GsShadowBegin(void)
+{
+    s_shadowPass=1;
+    // Preserve scene depth; draw white (128 RGB) coverage where the
+    // already-rendered receiver passes ZGREATER. Ground and ramp shadows
+    // are thus cropped by the real foreground surface, not just a 2D mask.
+    b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,1),GS_REG_ZBUF_1);
+    b3GsKawaseTarget(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H);
+    b3GsKawaseClear(B3_PS2_GS_W,B3_PS2_GS_H);
+    b3GsAD(GS_SET_TEST(0,0,0,0,0,0,1,2),GS_REG_TEST_1);
+}
+void b3GsShadowEnd(void)
+{
+    s_shadowPass=0;
+    // Full mask -> half via one GS bilinear draw.
+    b3GsKawaseTarget(s_halfMask[0],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
+    b3GsKawaseClear(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H);
+    b3GsKawaseSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H,9,8);
+    b3GsAD(GS_SET_ALPHA(0,2,2,1,128),GS_REG_ALPHA_1);
+    b3GsKawaseBlit(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
+                   B3_PS2_GS_W,B3_PS2_GS_H,0,0);
+    // Downsample/Kawase blur: half -> quarter.
+    b3GsKawasePass(s_quarterMask[0],B3_KAWASE_QUARTER_W,
+                   B3_KAWASE_QUARTER_H,s_halfMask[0],
+                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,8,7,1);
+    // Upsample/Kawase blur: quarter -> half, separate VRAM page.
+    b3GsKawasePass(s_halfMask[1],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
+                   s_quarterMask[0],B3_KAWASE_QUARTER_W,
+                   B3_KAWASE_QUARTER_H,7,6,2);
+    // Optional refinement ping-pong at half resolution.
+    b3GsKawasePass(s_halfMask[0],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
+                   s_halfMask[1],B3_KAWASE_HALF_W,
+                   B3_KAWASE_HALF_H,8,7,1);
+
+    // Back to main scene. GS RGB subtract blend:
+    // (ZERO - SRC_RGB)*(FIX/128) + DEST_RGB.
+    // Four shifted textured sprites with FIX=16 produce at most ~64
+    // gray levels of soft shadow. The blurred RGB mask, not alpha,
+    // controls opacity; no pixel shader or software blur is needed.
+    b3GsKawaseTarget(s_framebuffer[s_back],B3_PS2_GS_W,B3_PS2_GS_H);
+    b3GsKawaseSource(s_halfMask[0],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,8,7);
+    b3GsAD(GS_SET_ALPHA(2,0,2,1,16),GS_REG_ALPHA_1);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
+                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,-2,-2);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
+                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H, 2,-2);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
+                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,-2, 2);
+    b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
+                   B3_KAWASE_HALF_W,B3_KAWASE_HALF_H, 2, 2);
+    // Subsequent HUD is written directly onto main color framebuffer.
+}
+#else
 void b3GsShadowBegin(void)
 {
     // Blend semi-transparent hard-edged shadow geometry onto the ground.
@@ -416,6 +529,7 @@ void b3GsShadowEnd(void)
     s_shadowPass=0;
     b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,0),GS_REG_ZBUF_1);
 }
+#endif
 
 // HUD is 2D GS sprite pixel glyphs, not BIOS scr_printf or a texture.
 // Z test is disabled only after rendering all world geometry.
