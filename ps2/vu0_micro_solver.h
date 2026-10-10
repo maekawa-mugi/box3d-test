@@ -65,8 +65,18 @@ static inline void b3Vu0MicroReference(b3Vu0MicroBlock* block)
     }
 }
 
-// Only the 4 explicit, opt-in diagnostic stages touch VU0 hardware.
-// Never call during an active VU0 microprogram or a Box3D world step.
+// Bound the unbatched live micro calls so BOX 400/S4 cannot turn one
+// input edge into thousands of synchronous VCALLMS/MMIO round-trips.
+// Remaining contacts use the original EE scalar reference. The complete
+// 64-lane differential always runs without this live-call budget.
+enum { B3_VU0_MICRO_MAX_LIVE_PER_STEP=32 };
+
+// Reset the live-call allowance once before each world step. This
+// does not upload code, launch microcode, or add controller stages.
+void b3Vu0MicroBeginPhysicsStep(void);
+
+// Startup upload/readback/64-lane differential, not the live solver.
+// Never call these during an active VU0 microprogram or world step.
 const char* b3Vu0MicroStatus(void);
 int b3Vu0MicroUpload(void);
 int b3Vu0MicroVerify(void);

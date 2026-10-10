@@ -74,7 +74,7 @@ static inline void b3Dot2W( b3Vec3W a0, b3Vec3W b0, b3Vec3W a1, b3Vec3W b1,
                             b3FloatW* out0, b3FloatW* out1 )
 {
 #if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
-    if ( b3Ps2GetVU0Enabled() >= 2 )
+    if ( b3Ps2VU0MacroModeMatches( b3Ps2GetVU0Enabled(), 2 ) )
     {
         b3DotPairW4( a0, b0, a1, b1, out0, out1 );
         return;
@@ -93,7 +93,7 @@ static inline void b3Dot2WExtended( b3Vec3W a0, b3Vec3W b0, b3Vec3W a1, b3Vec3W 
                                     b3FloatW* out0, b3FloatW* out1 )
 {
 #if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
-    if ( b3Ps2GetVU0Enabled() >= 3 )
+    if ( b3Ps2VU0MacroModeMatches( b3Ps2GetVU0Enabled(), 3 ) )
     {
         b3Ps2RecordVU0ExtendedPair();
         b3DotPairW4( a0, b0, a1, b1, out0, out1 );
@@ -111,7 +111,7 @@ static inline void b3Dot2SharedW( b3Vec3W shared, b3Vec3W b0, b3Vec3W b1,
                                   b3FloatW* out0, b3FloatW* out1 )
 {
 #if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
-    if ( b3Ps2GetVU0Enabled() >= 4 )
+    if ( b3Ps2VU0MacroModeMatches( b3Ps2GetVU0Enabled(), 4 ) )
     {
         b3Ps2VU0SharedDotData s;
         b3StoreW4( s.sharedX, shared.X );

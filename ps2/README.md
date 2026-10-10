@@ -1069,3 +1069,27 @@ an already initialized GS/GIF path. Unified megademo ELF now opens
 directly to BENCH 400 (page 12/12) and renders one EE frame while
 the units are being initialized. All subsequent frames use VU1
 unless its verified normal DMA path fails. No multi-press protocol.
+
+## VU0 mode 6 safety: isolated micro execution and bounded live work
+
+R10 accidentally allowed mode 6 to pass the legacy `>=2`, `>=3`
+and `>=4` VU0 COP2 macro-dot dispatch conditions. Mode 6 now
+runs the real VU0 micro normal-contact kernel without interleaving
+the old macro-dot kernels; other contact work stays on EE.
+
+Because the live solver still launches only one SIMD4 record per
+VCALLMS, the megademo caps real VU0 micro calls at
+`B3_VU0_MICRO_MAX_LIVE_PER_STEP` per **world step** and completes
+remaining normal contacts on EE. TRIANGLE's ON state is therefore
+explicitly a **VU0+EE mixed** solver, not a fully offloaded solver.
+Budget fallback does not disable VU0; an actual micro fault still
+disables mode 6. The standalone 16-group/64-lane differential is
+unchanged and not subject to the live budget.
+
+VU1 VIF1/MSCAL/XGKICK and GIF PATH3 -> PATH1 -> PATH3 ordering
+are unchanged; the mode switch is applied between completed frames
+and the world step completes before any draw submission. Host CI
+checks the macro/micro dispatch predicate and the existing VU0 ABI.
+PCSX2 graphics recovery, 400-awake 60 FPS and real micro throughput
+are **not verified** by host tests. Full 64-lane batched live physics
+remains future work.

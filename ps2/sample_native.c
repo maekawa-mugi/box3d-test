@@ -1370,7 +1370,7 @@ static void render_official_hud(void)
         s_vu1Ready?"VU1 AUTO ON":"VU1 FAIL / EE",
         s_vu1Ready?155:255,s_vu1Ready?243:139,176);
     b3GsOverlayText(390,82,
-        b3Ps2GetVU0Enabled()==6?"TRIANGLE VU0 ON":"TRIANGLE VU0 OFF",
+        b3Ps2GetVU0Enabled()==6?"TRIANGLE VU0 MIX":"TRIANGLE VU0 OFF",
         255,238,132);
     b3GsOverlayText(390,110,
         s_vu0MicroPassed?"VU0 MICRO READY":"VU0 MICRO UNAVAIL",
@@ -1684,6 +1684,7 @@ int main(void)
         uint32_t frameStart=b3Ps2ReadCpuCycles();
 #endif
 #if defined(BOX3D_PS2_UNIFIED)
+        b3Vu0MicroBeginPhysicsStep();
         b3World_Step(s_scene.world,1.0f/60.0f,s_simSubsteps);
         if(s_vu0Mode!=b3Ps2GetVU0Enabled())
         {

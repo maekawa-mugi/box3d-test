@@ -26,6 +26,14 @@ typedef struct b3Ps2VU0Dot4Data
 // This is an opt-in experimental correctness mode, not yet fast batching.
 // This isolates additional scheduling/data-transfer gains from mode 2.
 // Mode 0 remains default. Change only between completed world steps.
+// Macro mode uses COP2 VF registers synchronously. Mode 6 exclusively
+// launches VU0 micro code, so it must never enter any macro dot kernels.
+// Keep all macro call-site predicates routed through this range check.
+static inline int b3Ps2VU0MacroModeMatches( int mode, int minimum )
+{
+    return mode >= minimum && mode <= 5;
+}
+
 void b3Ps2SetVU0Enabled( int enabled );
 int b3Ps2GetVU0Enabled( void );
 

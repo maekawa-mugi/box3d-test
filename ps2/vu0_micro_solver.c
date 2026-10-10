@@ -25,6 +25,9 @@ static int s_uploaded,s_verified;
 static const char* s_status="VU0 MICRO NOT INIT";
 static _Alignas(64) b3Vu0MicroBlock s_microData;
 static unsigned s_liveCalls;
+static unsigned s_stepCalls;
+
+void b3Vu0MicroBeginPhysicsStep(void){s_stepCalls=0;}
 _Static_assert(sizeof(b3Ps2VU0NormalSolveData)==sizeof(b3Vu0MicroRecord),
                "Box3D SIMD4 normal impulse ABI must match VU0 micro record");
 
@@ -102,9 +105,14 @@ int b3Vu0MicroVerify(void)
 
 static int b3Vu0MicroRunBlock(b3Vu0MicroBlock* block,unsigned groups)
 {
-    if(!s_verified || groups==0 || groups>B3_VU0_MICRO_GROUPS ||
-       !b3Vu0WaitIdle())
+    if(!s_verified || groups==0 || groups>B3_VU0_MICRO_GROUPS)
         return 0;
+    if(!b3Vu0WaitIdle())
+    {
+        s_verified=0;
+        s_status="VU0 FAIL BUSY";
+        return 0;
+    }
     // DMA is not required for VU0: the mapped 4KB VU0 data window
     // contains a bounded control QW followed by N 13-QW records.
     block->control[0]=groups;
@@ -133,14 +141,16 @@ static int b3Vu0MicroRunBlock(b3Vu0MicroBlock* block,unsigned groups)
 int b3Vu0MicroIsReady(void){return s_verified;}
 unsigned b3Vu0MicroGetLiveCalls(void){return s_liveCalls;}
 
-// First real Box3D contact-solver connection. One SIMD4 constraint at
-// a time is deliberately conservative and may be MUCH slower than EE;
-// this is the correctness/throughput baseline before batching.
+// Each unbatched VCALLMS is a synchronous EE/VU0 round-trip. In large
+// awake scenes bound the number per physics step; use scalar thereafter
+// without changing the user's selected mode or disabling valid microcode.
+// Return 1 on success, 0 for a safe budget fallback, -1 on failure.
 int b3Vu0MicroNormalSolve4(b3Ps2VU0NormalSolveData* record)
 {
-    if(!record || !s_verified)return 0;
+    if(!record || !s_verified)return -1;
+    if(s_stepCalls>=B3_VU0_MICRO_MAX_LIVE_PER_STEP)return 0;
     memcpy(&s_microData.record[0],record,sizeof(*record));
-    if(!b3Vu0MicroRunBlock(&s_microData,1u))return 0;
+    if(!b3Vu0MicroRunBlock(&s_microData,1u))return -1;
     // Validate real moving-contact inputs on startup, rather than
     // trusting a differential probe made only from binary fractions.
     // The comparison is bounded: first 64 calls and one every 1024.
@@ -178,13 +188,14 @@ int b3Vu0MicroNormalSolve4(b3Ps2VU0NormalSolveData* record)
                            (double)actual[k]);
                     s_verified=0;
                     s_status="VU0 FAIL LIVE DIFF";
-                    return 0;
+                    return -1;
                 }
             }
         }
     }
     memcpy(record,&s_microData.record[0],sizeof(*record));
     ++s_liveCalls;
+    ++s_stepCalls;
     return 1;
 }
 
@@ -254,6 +265,7 @@ const char* b3Vu0MicroStatus(void){return s_status;}
 int b3Vu0MicroUpload(void){return 0;}
 int b3Vu0MicroVerify(void){return 0;}
 int b3Vu0MicroDifferentialTest(void){return 0;}
+void b3Vu0MicroBeginPhysicsStep(void){}
 int b3Vu0MicroIsReady(void){return 0;}
 unsigned b3Vu0MicroGetLiveCalls(void){return 0;}
 int b3Vu0MicroNormalSolve4(b3Ps2VU0NormalSolveData* data)

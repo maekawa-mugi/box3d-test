@@ -1282,11 +1282,13 @@ B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* conte
 					}
 					else
 					{
-						solvedOnVu0 = b3Vu0MicroNormalSolve4( &s ) != 0;
-						if ( !solvedOnVu0 )
+						// 1: verified micro result; 0: per-step budget reached,
+						// so use the ordinary EE scalar path for this contact.
+						// -1: hardware/data failure, disable micro entirely.
+						int microResult = b3Vu0MicroNormalSolve4( &s );
+						solvedOnVu0 = microResult > 0;
+						if ( microResult < 0 )
 						{
-							// Never consume unchecked micro output. Restore
-							// scalar solver for all subsequent contacts.
 							b3Ps2SetVU0Enabled( 0 );
 						}
 					}

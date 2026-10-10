@@ -2,6 +2,7 @@
 // Host regression: VU0 4-lane/16-record DMEM ABI and scalar math contract.
 // This test does NOT execute PS2 microcode; PCSX2 runs the real differential.
 #include "vu0_micro_solver.h"
+#include "../src/ps2_vu0.h"
 #include <assert.h>
 #include <math.h>
 #include <stdint.h>
@@ -19,6 +20,18 @@ int main(void)
     assert(offsetof(b3Vu0MicroRecord,newManifoldTotal)==176u);
     assert(offsetof(b3Vu0MicroRecord,newTwistLimit)==192u);
     assert(B3_VU0_MICRO_TOTAL_QWS<256u);
+    // Mode 6 must never run legacy COP2 macro dot kernels while the
+    // VU0 micro engine owns the same vector unit.
+    assert(!b3Ps2VU0MacroModeMatches(0,2));
+    assert(!b3Ps2VU0MacroModeMatches(1,2));
+    assert(b3Ps2VU0MacroModeMatches(2,2));
+    assert(b3Ps2VU0MacroModeMatches(3,3));
+    assert(b3Ps2VU0MacroModeMatches(4,4));
+    assert(b3Ps2VU0MacroModeMatches(5,2));
+    assert(!b3Ps2VU0MacroModeMatches(6,2));
+    assert(!b3Ps2VU0MacroModeMatches(6,3));
+    assert(!b3Ps2VU0MacroModeMatches(6,4));
+    assert(B3_VU0_MICRO_MAX_LIVE_PER_STEP>0);
     b3Vu0MicroBlock block={0};
     assert(((uintptr_t)&block&15u)==0u);
     for(unsigned seed=0;seed<64u;++seed)
