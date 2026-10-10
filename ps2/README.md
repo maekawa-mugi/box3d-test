@@ -421,3 +421,10 @@ desktop renderer's Preetham/PBR/IBL/GTAO/shadow-map pipeline.
 The new ELF has not been compiled or run in PCSX2 yet. The old
 `ps2/box3d_ps2_samples_solid.elf` stays available as the known-good
 Z-buffered build, and `ps2/box3d_ps2_samples.elf` stays as wireframe.
+
+The official-style first Box Stack also restores the **full 40 dynamic
+boxes**, original 1.25m vertical spacing, 40m half-extent ground,
+and approximately the original 40° yaw / 15° pitch / 50m orbit camera
+looking at Y=20. The previously validated wireframe/filled builds
+still use 12 boxes and their smaller scene camera. This changes
+physics/rendering load; 60fps must be re-evaluated in the new ELF.

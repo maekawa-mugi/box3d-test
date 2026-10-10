@@ -106,3 +106,10 @@ and 60fps is unverified for this more expensive renderer.
 **The official-inspired edition is new and not yet crossbuilt or
 PCSX2-validated.** The previous GS-filled sample remains the fallback
 if any rendering or performance regression occurs.
+
+The official-style first Box Stack also restores the **full 40 dynamic
+boxes**, original 1.25m vertical spacing, 40m half-extent ground,
+and approximately the original 40° yaw / 15° pitch / 50m orbit camera
+looking at Y=20. The previously validated wireframe/filled builds
+still use 12 boxes and their smaller scene camera. This changes
+physics/rendering load; 60fps must be re-evaluated in the new ELF.
