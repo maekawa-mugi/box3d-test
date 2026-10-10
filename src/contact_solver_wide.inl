@@ -719,7 +719,7 @@ B3_FORCE_INLINE bool b3PrepareConstraintW( b3ContactConstraintWide* c, b3Contact
 		cm->normal = normal;
 		cm->tangent1 = tangent1;
 		cm->tangent2 = tangent2;
-		b3Dot2W( tangentVelocity, tangent1, tangentVelocity, tangent2,
+		b3Dot2SharedW( tangentVelocity, tangent1, tangent2,
 				  &cm->tangentVelocity1, &cm->tangentVelocity2 );
 
 		cm->twistImpulse = b3MulW( warmStartScale, twistImpulse );
@@ -727,7 +727,7 @@ B3_FORCE_INLINE bool b3PrepareConstraintW( b3ContactConstraintWide* c, b3Contact
 		cm->rollingImpulse.Y = b3BlendW( zeroW, b3MulW( warmStartScale, rollingImpulse.Y ), cm->rollingMask );
 		cm->rollingImpulse.Z = b3BlendW( zeroW, b3MulW( warmStartScale, rollingImpulse.Z ), cm->rollingMask );
 		b3FloatW frictionDot1, frictionDot2;
-		b3Dot2W( frictionImpulse, tangent1, frictionImpulse, tangent2, &frictionDot1, &frictionDot2 );
+		b3Dot2SharedW( frictionImpulse, tangent1, tangent2, &frictionDot1, &frictionDot2 );
 		cm->frictionImpulse.x = b3MulW( warmStartScale, frictionDot1 );
 		cm->frictionImpulse.y = b3MulW( warmStartScale, frictionDot2 );
 
@@ -1341,7 +1341,7 @@ B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* conte
 				b3Vec3W vrB = b3AddVW( bB.v, b3CrossW( bB.w, rB ) );
 				b3Vec3W vr = b3SubVW( vrB, vrA );
 				b3FloatW tangentDot1, tangentDot2;
-				b3Dot2W( vr, tangent1, vr, tangent2, &tangentDot1, &tangentDot2 );
+				b3Dot2SharedW( vr, tangent1, tangent2, &tangentDot1, &tangentDot2 );
 				b3Vec2W vt = {
 					b3SubW( tangentDot1, cm->tangentVelocity1 ),
 					b3SubW( tangentDot2, cm->tangentVelocity2 ),

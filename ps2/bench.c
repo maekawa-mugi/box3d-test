@@ -30,6 +30,7 @@ typedef struct BenchResult
     int cleanupOk;
     unsigned pairCalls;
     unsigned extendedPairs;
+    unsigned sharedDots;
     // Box3D's own nested profile: sum across all measured steps, in ms.
     // Read outside the externally timed b3World_Step call, so accessor
     // overhead does not contaminate the Count delta.
@@ -232,6 +233,7 @@ static BenchResult run_physics( int mode, int vu0Mode, int side, int layers )
 
     result.pairCalls = b3Ps2GetVU0PairCount();
     result.extendedPairs = b3Ps2GetVU0ExtendedPairCount();
+    result.sharedDots = b3Ps2GetVU0SharedDotCount();
     b3DestroyWorld( world );
     result.cleanupOk = beforeBytes == b3GetByteCount() && beforeWorlds == b3GetWorldCount();
     if ( !result.cleanupOk ) screen_stop( "world memory leak" );
@@ -529,6 +531,53 @@ static void vu0_batch_benchmark( void )
            (unsigned long long)(batchTicks/iterations),checksum);
 }
 
+
+static void vu0_shared_kernel_check( void )
+{
+    b3Ps2VU0SharedDotData d;
+    float worst = 0.0f;
+    for ( int trial = 0; trial < 96; ++trial )
+    {
+        for ( int lane = 0; lane < 4; ++lane )
+        {
+            const float t = 0.019f*(float)(trial+1) + 0.031f*(float)(lane+1);
+            d.sharedX[lane] = 0.3f + t;
+            d.sharedY[lane] = -0.9f - t;
+            d.sharedZ[lane] = 1.2f + 0.25f*t;
+            d.b0x[lane] = -0.8f + 0.1f*t;
+            d.b0y[lane] = 1.5f + 0.2f*t;
+            d.b0z[lane] = 0.7f - 0.3f*t;
+            d.b1x[lane] = -1.1f - t;
+            d.b1y[lane] = 0.4f + t;
+            d.b1z[lane] = -0.6f + 0.2f*t;
+        }
+        b3Ps2VU0SharedDot4( &d );
+        for ( int lane = 0; lane < 4; ++lane )
+        {
+            float ref0 = ((d.sharedX[lane]*d.b0x[lane]) +
+                          (d.sharedY[lane]*d.b0y[lane])) +
+                           d.sharedZ[lane]*d.b0z[lane];
+            float ref1 = ((d.sharedX[lane]*d.b1x[lane]) +
+                          (d.sharedY[lane]*d.b1y[lane])) +
+                           d.sharedZ[lane]*d.b1z[lane];
+            float e0 = fabsf(d.out0[lane]-ref0);
+            float e1 = fabsf(d.out1[lane]-ref1);
+            if (e0 > worst) worst = e0;
+            if (e1 > worst) worst = e1;
+            if (!isfinite(d.out0[lane]) || !isfinite(d.out1[lane]) ||
+                e0 > 0.0005f+0.00005f*fabsf(ref0) ||
+                e1 > 0.0005f+0.00005f*fabsf(ref1))
+            {
+                screen_stop( "VU0 shared dot differs from COP1" );
+            }
+        }
+    }
+    char display[128];
+    snprintf(display,sizeof(display),"VU0 shared pair: 768 lanes PASS, max err %.6f",worst);
+    screen_line(display);
+    printf("BOX3D_VU0_SHARED_CHECK,PASS,lanes=768,max_error=%.7f\n",worst);
+}
+
 static void vu0_scene_benchmark( const char* label, int side, int layers, int baselineMode, int targetMode )
 {
     // ABBA interleaves the selected baseline and target mode. Comparing
@@ -539,9 +588,9 @@ static void vu0_scene_benchmark( const char* label, int side, int layers, int ba
     for ( int i = 0; i < 4; ++i )
     {
         runs[i] = run_physics( 0, modes[i], side, layers );
-        printf( "BOX3D_VU0_SCENE,%s,repeat=%d,vu0=%d,ticks=%llu,pairs=%u,extended=%u,y=%.7f,pos=%.7f,vel=%.7f\n",
+        printf( "BOX3D_VU0_SCENE,%s,repeat=%d,vu0=%d,ticks=%llu,pairs=%u,extended=%u,shared=%u,y=%.7f,pos=%.7f,vel=%.7f\n",
                 label,i,modes[i],(unsigned long long)runs[i].ticks,runs[i].pairCalls,
-                runs[i].extendedPairs,runs[i].firstY,runs[i].positionSum,runs[i].velocitySum );
+                runs[i].extendedPairs,runs[i].sharedDots,runs[i].firstY,runs[i].positionSum,runs[i].velocitySum );
         printf( "BOX3D_VU0_PHASE,%s,repeat=%d,vu0=%d,step_ms=%.4f,pairs_ms=%.4f,collide_ms=%.4f,solve_ms=%.4f,sensors_ms=%.4f\n",
                 label,i,modes[i],runs[i].profileStepMs,runs[i].profilePairsMs,
                 runs[i].profileCollideMs,runs[i].profileSolveMs,runs[i].profileSensorsMs );
@@ -549,9 +598,13 @@ static void vu0_scene_benchmark( const char* label, int side, int layers, int ba
         {
             screen_stop( "VU0 paired backend unused in physics" );
         }
-        if ( modes[i] == 3 && runs[i].extendedPairs == 0 )
+        if ( modes[i] >= 3 && runs[i].extendedPairs == 0 )
         {
             screen_stop( "VU0 extended pairing unused in physics" );
+        }
+        if ( modes[i] == 4 && runs[i].sharedDots == 0 )
+        {
+            screen_stop( "VU0 shared-vector kernel unused in physics" );
         }
         // ABBA: trials 0/3 are the chosen baseline (which may be mode 2),
         // trials 1/2 are the target. Checking 'if (modes[i])' was WRONG
@@ -656,6 +709,11 @@ int main( void )
               (unsigned long long)(pairScalar/256),
               (unsigned long long)(pairVector/256) );
     screen_line( vu0Line );
+    vu0_shared_kernel_check();
+    // Keep the useful final A/B scene rows on screen regardless of how
+    // many earlier correctness/microbenchmark lines were printed.
+    scr_clear();
+    screen_line( "VU0 physics A/B: COP1, pair, extended, shared" );
     vu0_scene_benchmark( "single eight-box", 2, 2, 0, 1 );
     vu0_scene_benchmark( "single 32-box", 4, 2, 0, 1 );
     vu0_scene_benchmark( "paired eight-box", 2, 2, 0, 2 );
@@ -663,8 +721,11 @@ int main( void )
     // ABBA directly compares last-known-good mode 2 to the extended
     // preparation-stage mode 3. 32 bodies have the best solver S/N ratio.
     vu0_scene_benchmark( "extended 32-box", 4, 2, 2, 3 );
+    // Mode 3 is the immediately preceding solver variant; shared-input
+    // COP2 loading is the *only* change being evaluated in mode 4.
+    vu0_scene_benchmark( "shared 32-box", 4, 2, 3, 4 );
     scr_setfontcolor( 0x77ff77u );
-    screen_line( "PASS: MMI + VU0 single/paired/extended physics" );
+    screen_line( "PASS: MMI + VU0 all four modes" );
     puts( "BOX3D_VU0_BENCH_PASS" );
     puts( "BOX3D_BENCH_PASS" );
     screen_line( "Result held; reset PS2 to exit." );

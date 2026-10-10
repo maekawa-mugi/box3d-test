@@ -20,11 +20,13 @@ _Static_assert( sizeof(b3Ps2VU0Dot4Data) % 16 == 0, "VU0 record stride" );
 static int s_vu0Mode;
 static unsigned s_vu0PairCount;
 static unsigned s_vu0ExtendedPairCount;
+static unsigned s_vu0SharedDotCount;
 
 void b3Ps2ResetVU0PairCount( void )
 {
     s_vu0PairCount = 0;
     s_vu0ExtendedPairCount = 0;
+    s_vu0SharedDotCount = 0;
 }
 
 unsigned b3Ps2GetVU0PairCount( void )
@@ -42,9 +44,14 @@ unsigned b3Ps2GetVU0ExtendedPairCount( void )
     return s_vu0ExtendedPairCount;
 }
 
+unsigned b3Ps2GetVU0SharedDotCount( void )
+{
+    return s_vu0SharedDotCount;
+}
+
 void b3Ps2SetVU0Enabled( int mode )
 {
-    s_vu0Mode = mode == 3 ? 3 : ( mode == 2 ? 2 : ( mode != 0 ? 1 : 0 ) );
+    s_vu0Mode = ( mode >= 0 && mode <= 4 ) ? mode : 0;
 }
 
 int b3Ps2GetVU0Enabled( void )
@@ -169,5 +176,64 @@ void b3Ps2VU0Dot4Pair( b3Ps2VU0Dot4PairData* data )
 #else
     b3Ps2VU0Dot4( &data->pair[0] );
     b3Ps2VU0Dot4( &data->pair[1] );
+#endif
+}
+
+_Static_assert( offsetof(b3Ps2VU0SharedDotData, sharedX) == 0, "VU0 shared-dot sharedX offset" );
+_Static_assert( offsetof(b3Ps2VU0SharedDotData, sharedY) == 16, "VU0 shared-dot sharedY offset" );
+_Static_assert( offsetof(b3Ps2VU0SharedDotData, sharedZ) == 32, "VU0 shared-dot sharedZ offset" );
+_Static_assert( offsetof(b3Ps2VU0SharedDotData, b0x) == 48, "VU0 shared-dot b0x offset" );
+_Static_assert( offsetof(b3Ps2VU0SharedDotData, b0y) == 64, "VU0 shared-dot b0y offset" );
+_Static_assert( offsetof(b3Ps2VU0SharedDotData, b0z) == 80, "VU0 shared-dot b0z offset" );
+_Static_assert( offsetof(b3Ps2VU0SharedDotData, b1x) == 96, "VU0 shared-dot b1x offset" );
+_Static_assert( offsetof(b3Ps2VU0SharedDotData, b1y) == 112, "VU0 shared-dot b1y offset" );
+_Static_assert( offsetof(b3Ps2VU0SharedDotData, b1z) == 128, "VU0 shared-dot b1z offset" );
+_Static_assert( offsetof(b3Ps2VU0SharedDotData, out0) == 144, "VU0 shared-dot out0 offset" );
+_Static_assert( offsetof(b3Ps2VU0SharedDotData, out1) == 160, "VU0 shared-dot out1 offset" );
+_Static_assert( sizeof(b3Ps2VU0SharedDotData) == 176, "VU0 shared-dot scratch size" );
+_Static_assert( _Alignof(b3Ps2VU0SharedDotData) >= 16, "VU0 shared-dot alignment" );
+
+// Eight float-dot vectors processed per kernel: two independent outputs of
+// four lanes each. Reuse the same VF1/2/3 operand for both dot products.
+// VU0 arithmetic association mirrors Box3D's ((x*y)+(y*y))+(z*z).
+// This is an alternative to the old 224-byte generic pair scratch, reducing
+// packing by 3 float4 values and COP2 loads from 12 to 9.
+void b3Ps2VU0SharedDot4( b3Ps2VU0SharedDotData* data )
+{
+    ++s_vu0SharedDotCount;
+#if defined(BOX3D_PS2) && (defined(__mips__) || defined(__mips))
+    __asm__ __volatile__(
+        "lqc2 $vf1, 0(%0)\n\t"
+        "lqc2 $vf2, 16(%0)\n\t"
+        "lqc2 $vf3, 32(%0)\n\t"
+        "lqc2 $vf4, 48(%0)\n\t"
+        "lqc2 $vf5, 64(%0)\n\t"
+        "lqc2 $vf6, 80(%0)\n\t"
+        "lqc2 $vf7, 96(%0)\n\t"
+        "lqc2 $vf8, 112(%0)\n\t"
+        "lqc2 $vf9, 128(%0)\n\t"
+        "vmul.xyzw $vf10, $vf1, $vf4\n\t"
+        "vmul.xyzw $vf11, $vf1, $vf7\n\t"
+        "vmul.xyzw $vf12, $vf2, $vf5\n\t"
+        "vmul.xyzw $vf13, $vf2, $vf8\n\t"
+        "vmul.xyzw $vf14, $vf3, $vf6\n\t"
+        "vmul.xyzw $vf15, $vf3, $vf9\n\t"
+        "vadd.xyzw $vf10, $vf10, $vf12\n\t"
+        "vadd.xyzw $vf11, $vf11, $vf13\n\t"
+        "vadd.xyzw $vf10, $vf10, $vf14\n\t"
+        "vadd.xyzw $vf11, $vf11, $vf15\n\t"
+        "sqc2 $vf10, 144(%0)\n\t"
+        "sqc2 $vf11, 160(%0)"
+        : : "r"(data) : "memory" );
+#else
+    for (int i = 0; i < 4; ++i)
+    {
+        data->out0[i] = ((data->sharedX[i] * data->b0x[i]) +
+                         (data->sharedY[i] * data->b0y[i])) +
+                          data->sharedZ[i] * data->b0z[i];
+        data->out1[i] = ((data->sharedX[i] * data->b1x[i]) +
+                         (data->sharedY[i] * data->b1y[i])) +
+                          data->sharedZ[i] * data->b1z[i];
+    }
 #endif
 }

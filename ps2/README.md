@@ -274,3 +274,26 @@ Transferring/packing little dot4 jobs repeatedly and the scalar control
 and broadphase paths do not meet those assumptions. Keep the old
 mode2 backend as the performance/correctness reference until a new
 experiment improves whole-engine `BOX3D_VU0_SUMMARY` on PCSX2.
+
+## Experimental mode 4: VU0 shared-vector friction dot pairs
+
+The PCSX2 mode2 vs mode3 32-box test was valid after fixing ABBA:
+mode2 **1597985** vs mode3 **1592702** Count cycles/step, only ~1.003x
+faster, with all correctness checks passing. This small difference is not
+enough to claim a stable gain without repeat measurements.
+
+Mode 4 retains mode 3 but replaces three friction dot-pair sites in the
+live contact solver with a **shared-input VU0 macro kernel**. It keeps the
+same velocity/impulse float4 vector in VF registers for both tangent dots,
+loading only 9 input float4s (instead of 12 in the generic paired-dot path)
+and storing 2 output float4s. The two results are computed with six
+independent VMUL followed by four dependent VADD instructions, with
+16-byte aligned 176-byte scratch. Mode 3 remains untouched for A/B.
+
+The smoke benchmark now checks 768 finite output lanes against COP1
+(`BOX3D_VU0_SHARED_CHECK`), reports `shared=` call counts, and runs a
+mode-3 vs mode-4 ABBA comparison labelled `shared 32-box`.
+It refuses a mode-4 physics run if the new shared kernel is not called.
+The on-screen VU0 scenes are cleared to a fresh GS page before reporting
+speed so the new comparison remains visible. These changes are **not
+crosscompiled or emulator-tested yet**. Mode 0 remains the default.

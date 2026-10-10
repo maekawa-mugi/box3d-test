@@ -20,6 +20,7 @@ typedef struct b3Ps2VU0Dot4Data
 // 0: original scalar COP1; 1: legacy single-dot VU0 path;
 // 2: original paired VU0 dot kernels (single dots stay scalar);
 // 3: same paired mode plus preparation-stage paired dots.
+// 4: mode 3 plus shared-input fused two-dot VU0 friction calculations.
 // This isolates additional scheduling/data-transfer gains from mode 2.
 // Mode 0 remains default. Change only between completed world steps.
 void b3Ps2SetVU0Enabled( int enabled );
@@ -52,3 +53,18 @@ unsigned b3Ps2GetVU0PairCount( void );
 // cannot report a speedup when the new code path was not reached.
 void b3Ps2RecordVU0ExtendedPair( void );
 unsigned b3Ps2GetVU0ExtendedPairCount( void );
+
+// Nine distinct input float4s and two output float4s, all aligned.
+// The old generic pair uses 12 input float4s and two outputs.
+// Batch 'shared dot tangent1' and 'shared dot tangent2' inside one VU0
+// macro invocation with a shared 3D vector retained in VF registers.
+typedef struct b3Ps2VU0SharedDotData
+{
+    _Alignas(16) float sharedX[4], sharedY[4], sharedZ[4];
+    float b0x[4], b0y[4], b0z[4];
+    float b1x[4], b1y[4], b1z[4];
+    float out0[4], out1[4];
+} b3Ps2VU0SharedDotData;
+
+void b3Ps2VU0SharedDot4( b3Ps2VU0SharedDotData* data );
+unsigned b3Ps2GetVU0SharedDotCount( void );
