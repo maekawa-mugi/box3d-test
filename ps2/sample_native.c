@@ -59,6 +59,11 @@ typedef struct SceneBody
     // Render the visual cuboid centered on the capsule, not body origin.
     b3GsPoint3 localCenter;
     uint8_t r,g,b;
+#if defined(BOX3D_PS2_UNIFIED)
+    b3Pos cachedPosition;
+    b3Quat cachedRotation;
+    b3GsPoint3 cachedVertices[8];
+#endif
 } SceneBody;
 
 typedef struct Scene
@@ -72,6 +77,12 @@ typedef struct Scene
 
 static Scene s_scene;
 static uint32_t s_frame;
+#if defined(BOX3D_PS2_UNIFIED)
+// Cached for a single rendered Box3D world step, reused by visible
+// boxes and both receiver-shadow passes. Saves two rigid transforms of
+// every 8-corner hull and repeated body ID lookups on dense scenes.
+
+#endif
 #if defined(BOX3D_GS_PROGRESSIVE)
 static Human s_ragdoll;
 #endif
@@ -132,6 +143,33 @@ static b3GsPoint3 pt(float x,float y,float z)
     b3GsPoint3 result={x,y,z};
     return result;
 }
+#if defined(BOX3D_PS2_UNIFIED)
+static void cacheSceneBodyPoses(void)
+{
+    for(int i=0;i<s_scene.count;++i)
+    {
+        SceneBody* body=&s_scene.objects[i];
+        body->cachedPosition=b3Body_GetPosition(body->id);
+        body->cachedRotation=b3Body_GetRotation(body->id);
+        for(int v=0;v<8;++v)
+        {
+            b3Vec3 local={
+                (v&1)?body->half.x:-body->half.x,
+                (v&2)?body->half.y:-body->half.y,
+                (v&4)?body->half.z:-body->half.z
+            };
+            local.x+=body->localCenter.x;
+            local.y+=body->localCenter.y;
+            local.z+=body->localCenter.z;
+            b3Vec3 rotated=b3RotateVector(body->cachedRotation,local);
+            body->cachedVertices[v]=pt(
+                (float)body->cachedPosition.x+rotated.x,
+                (float)body->cachedPosition.y+rotated.y,
+                (float)body->cachedPosition.z+rotated.z);
+        }
+    }
+}
+#endif
 static b3GsPoint3 fromVec3(b3Vec3 v){return pt(v.x,v.y,v.z);}
 
 static int fail_assert(const char* expr,const char* path,int line)
@@ -476,6 +514,11 @@ static void draw_box(const SceneBody* body)
         {0,1},{0,2},{0,4},{1,3},{1,5},{2,3},
         {2,6},{3,7},{4,5},{4,6},{5,7},{6,7}
     };
+#if defined(BOX3D_PS2_UNIFIED)
+    b3Pos origin=body->cachedPosition;
+    b3Quat q=body->cachedRotation;
+    const b3GsPoint3* verts=body->cachedVertices;
+#else
     b3Pos origin=b3Body_GetPosition(body->id);
     b3Quat q=b3Body_GetRotation(body->id);
     b3GsPoint3 verts[8];
@@ -494,6 +537,7 @@ static void draw_box(const SceneBody* body)
                     (float)origin.y+rotated.y,
                     (float)origin.z+rotated.z);
     }
+#endif
 #if defined(BOX3D_GS_SOLID)
     // Draw solid box sides for each dynamic body and the inclined plane.
     // The large static ground remains a wireframe to preserve the grid.
@@ -514,11 +558,10 @@ static void draw_box(const SceneBody* body)
             // EE back-face culling before 2-triangle emission.
             // About half of convex box faces are not visible from a
             // camera outside the hull. Retains GS Z for occlusion.
-            b3Pos center=b3Body_GetPosition(body->id);
             b3Vec3 toEye={
-                s_scene.camera.eye.x-(float)center.x,
-                s_scene.camera.eye.y-(float)center.y,
-                s_scene.camera.eye.z-(float)center.z
+                s_scene.camera.eye.x-(float)origin.x,
+                s_scene.camera.eye.y-(float)origin.y,
+                s_scene.camera.eye.z-(float)origin.z
             };
             if(n.x*toEye.x+n.y*toEye.y+n.z*toEye.z<=0.0f)
             {
@@ -684,6 +727,13 @@ static b3ShadowReceiver makeReceiver(int index)
 }
 static void cornersForBody(const SceneBody* body,b3ShadowVec3 out[8])
 {
+#if defined(BOX3D_PS2_UNIFIED)
+    // Exact same transformed vertices as the solid box triangles.
+    for(int v=0;v<8;++v)
+        out[v]=(b3ShadowVec3){body->cachedVertices[v].x,
+                              body->cachedVertices[v].y,
+                              body->cachedVertices[v].z};
+#else
     b3Pos origin=b3Body_GetPosition(body->id);
     b3Quat q=b3Body_GetRotation(body->id);
     for(int v=0;v<8;++v)
@@ -703,6 +753,7 @@ static void cornersForBody(const SceneBody* body,b3ShadowVec3 out[8])
             (float)origin.z+world.z
         };
     }
+#endif
 }
 static void render_receiver_shadows(int receiver)
 {
@@ -985,6 +1036,9 @@ static void render_official_hud(void)
 #endif
 static void render(void)
 {
+#if defined(BOX3D_PS2_UNIFIED)
+    cacheSceneBodyPoses();
+#endif
 #if defined(BOX3D_GS_PROGRESSIVE)
     s_culledFaces=0;
     s_emittedFaces=0;
