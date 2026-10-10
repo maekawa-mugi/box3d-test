@@ -92,6 +92,16 @@ int b3GsInit(void)
     // Scratch is disjoint from both color buffers and the depth buffer.
     s_shadowMask=graph_vram_allocate(B3_PS2_GS_W,B3_PS2_GS_H,
                                      GS_PSM_32,GRAPH_ALIGN_PAGE);
+#if defined(BOX3D_GS_PCF_SHADOWS)
+    // PCF samples only RAW full-resolution coverage. No extra half
+    // or quarter pages are needed: reclaim ~175 KiB raw texel space
+    // for future megademo assets / render targets in 4 MiB GS VRAM.
+    if(s_shadowMask<0)
+    {
+        puts("BOX3D_GS_FAIL,pcf_mask_vram_allocation");
+        return 0;
+    }
+#else
     for(int i=0;i<2;++i)
     {
         s_halfMask[i]=graph_vram_allocate(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
@@ -105,6 +115,7 @@ int b3GsInit(void)
         puts("BOX3D_GS_FAIL,kawase_vram_allocation");
         return 0;
     }
+#endif
 #endif
     if (s_framebuffer[0] < 0 || s_framebuffer[1] < 0)
     {

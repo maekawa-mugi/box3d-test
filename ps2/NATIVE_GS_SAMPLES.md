@@ -378,9 +378,9 @@ sh ps2/build_ee.sh
 
 Both use the same Box3D positions/casters/receiver order. GS HUD for
 the new edition reads `GS PCF 3X3`, and stdout prints
-`BOX3D_SHADOW_FILTER,PCF_MASK_3X3,...`. The PCF mode still allocates
-the earlier shared half/quarter scratch buffers for layout simplicity
-but does not sample or iterate over them.
+`BOX3D_SHADOW_FILTER,PCF_MASK_3X3,...`. The PCF edition allocates only the full-resolution RAW mask; it does
+not reserve the extra two half-resolution and two quarter-resolution
+Kawase ping-pong VRAM surfaces (about 175 KiB in raw texel storage).
 
 **The new PCF ELF has not yet been crosscompiled/run in PCS​​X2; the
 soft working screenshot validates only the older Kawase pipeline.**
