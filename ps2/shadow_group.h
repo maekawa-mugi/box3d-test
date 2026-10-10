@@ -29,10 +29,10 @@ static inline int b3Ps2ShadowRoot(int parent[],int i)
     }
     return i;
 }
-// Connected components of projected shadows. Each union has one mask,
-// one max radius and one filtered GS composite. Separate shadows still
-// retain distinct radii. Deterministic O(N*N) integer bounds comparisons
-// replace multiple GPU over-darkening passes.
+// Broadphase with 32-pixel X buckets and an active interval list.
+// Exact 2D expanded-AABB overlap checks preserve union-find semantics.
+// Nonoverlapping horizontal shadow regions no longer compare all pairs.
+// Dense all-overlapping inputs still have a quadratic worst case.
 static inline int b3Ps2ShadowGroup(const b3Ps2ShadowBounds input[],
                                     int count,int parent[],
                                     b3Ps2ShadowBounds output[])
@@ -42,19 +42,52 @@ static inline int b3Ps2ShadowGroup(const b3Ps2ShadowBounds input[],
         parent[i]=input[i].valid?i:-1;
         output[i].valid=0;
     }
+    if(count<=0)return 0;
+    enum { BUCKET_SHIFT=5, BUCKETS=32 };
+    int first[BUCKETS],last[BUCKETS];
+    for(int k=0;k<BUCKETS;++k)first[k]=last[k]=-1;
+    // C17 VLAs: max stress scene uses about 400 bodies (few KiB).
+    int next[count],active[count];
     for(int i=0;i<count;++i)
     {
+        next[i]=-1;
         if(!input[i].valid)continue;
-        for(int j=i+1;j<count;++j)
+        int left=input[i].x0-(int)input[i].radius*3-6;
+        int bucket=left<=0?0:left>>(BUCKET_SHIFT);
+        if(bucket>=BUCKETS)bucket=BUCKETS-1;
+        if(last[bucket]<0)first[bucket]=i;
+        else next[last[bucket]]=i;
+        last[bucket]=i;
+    }
+    int activeCount=0;
+    for(int bucket=0;bucket<BUCKETS;++bucket)
+    {
+        // Once an interval ends before this bucket starts it cannot
+        // intersect anything in this or a later bucket.
+        int bucketStart=bucket<<BUCKET_SHIFT;
+        int alive=0;
+        for(int k=0;k<activeCount;++k)
         {
-            if(!b3Ps2ShadowTouch(&input[i],&input[j]))continue;
-            int a=b3Ps2ShadowRoot(parent,i);
-            int b=b3Ps2ShadowRoot(parent,j);
-            if(a!=b)
+            int j=active[k];
+            int right=input[j].x1+(int)input[j].radius*3+6;
+            if(right>=bucketStart)active[alive++]=j;
+        }
+        activeCount=alive;
+        for(int i=first[bucket];i>=0;i=next[i])
+        {
+            for(int k=0;k<activeCount;++k)
             {
-                if(a<b)parent[b]=a;
-                else parent[a]=b;
+                int j=active[k];
+                if(!b3Ps2ShadowTouch(&input[i],&input[j]))continue;
+                int a=b3Ps2ShadowRoot(parent,i);
+                int b=b3Ps2ShadowRoot(parent,j);
+                if(a!=b)
+                {
+                    if(a<b)parent[b]=a;
+                    else parent[a]=b;
+                }
             }
+            active[activeCount++]=i;
         }
     }
     int num=0;

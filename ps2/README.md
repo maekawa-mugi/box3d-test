@@ -285,3 +285,13 @@ Expected total surface allocation: **3,948,544 / 4,194,304 bytes**,
 leaving **245,760 bytes**. This is a change in GS blend path and must be
 visually checked on PCSX2/real GS, particularly mask intensity and edges.
 No FPS or silhouette-quality improvement is claimed without a new run.
+
+## 2026-10-10: screen-space shadow union broadphase
+
+The 1..5-radius caster component builder now uses 32-pixel X buckets
+and prunes completed intervals before exact pairwise 2D overlap tests.
+Disjoint horizontal regions avoid a full N*N comparison. Overlapping
+rectangles still use the same deterministic lowest-index union root and
+one subtractive mask composite per connected component. Dense fully
+overlapping casters remain worst-case O(N^2); this is a broadphase
+optimization rather than a claim of strict linear complexity.
