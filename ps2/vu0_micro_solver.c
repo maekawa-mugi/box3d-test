@@ -126,8 +126,16 @@ static int b3Vu0MicroRunBlock(b3Vu0MicroBlock* block,unsigned groups)
     block->control[0]=groups;
     const uint32_t* in=(const uint32_t*)block;
     volatile uint32_t* vu=B3_VU0_DATA_BASE;
-    const size_t inputWords=4u+groups*B3_VU0_MICRO_RECORD_QWS*4u;
-    for(size_t i=0;i<inputWords;++i)vu[i]=in[i];
+    // Only transfer the control and eight input QWs per record.
+    // Five output QWs are wholly written by VU0; copying stale EE
+    // output data to DMEM wastes 20 MMIO writes for each SIMD4 group.
+    for(unsigned i=0;i<4u;++i)vu[i]=in[i];
+    for(unsigned g=0;g<groups;++g)
+    {
+        size_t start=4u+g*B3_VU0_MICRO_RECORD_QWS*4u;
+        for(unsigned i=0;i<B3_VU0_MICRO_INPUT_QWS*4u;++i)
+            vu[start+i]=in[start+i];
+    }
     __asm__ __volatile__("sync.l" ::: "memory");
     __asm__ __volatile__("vcallms 0" ::: "memory");
     if(!b3Vu0WaitIdle())

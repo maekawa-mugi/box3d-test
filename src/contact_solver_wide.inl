@@ -1234,6 +1234,10 @@ B3_FORCE_INLINE void b3SolveBatchedNormalsW4( b3SolverBlock block, b3StepContext
         b3ContactManifoldWide* manifold[B3_PS2_VU0_BATCH_GROUPS];
         b3BodyStateW bodyA[B3_PS2_VU0_BATCH_GROUPS];
         b3BodyStateW bodyB[B3_PS2_VU0_BATCH_GROUPS];
+        // Constant throughout all normal points of this contact.
+        b3FloatW separation[B3_PS2_VU0_BATCH_GROUPS];
+        b3Vec3W normalA[B3_PS2_VU0_BATCH_GROUPS];
+        b3Vec3W normalB[B3_PS2_VU0_BATCH_GROUPS];
         b3FloatW totalNormal[B3_PS2_VU0_BATCH_GROUPS];
         b3FloatW totalTwist[B3_PS2_VU0_BATCH_GROUPS];
         b3Ps2BatchNormalSlot slots[B3_PS2_VU0_BATCH_GROUPS];
@@ -1252,6 +1256,11 @@ B3_FORCE_INLINE void b3SolveBatchedNormalsW4( b3SolverBlock block, b3StepContext
             scratch.manifold[g] = b3GetManifoldsW( c );
             scratch.bodyA[g] = b3GatherBodies( states, c->indexA );
             scratch.bodyB[g] = b3GatherBodies( states, c->indexB );
+            const b3ContactManifoldWide* cm = scratch.manifold[g];
+            scratch.separation[g] = b3DotW( cm->normal,
+                b3SubVW( scratch.bodyB[g].dp, scratch.bodyA[g].dp ) );
+            scratch.normalA[g] = b3InvRotateVectorW( scratch.bodyA[g].dq, cm->normal );
+            scratch.normalB[g] = b3InvRotateVectorW( scratch.bodyB[g].dq, cm->normal );
             scratch.totalNormal[g] = zeroW;
             scratch.totalTwist[g] = zeroW;
             if ( scratch.manifold[g]->pointCount > maxPoints )
@@ -1277,13 +1286,10 @@ B3_FORCE_INLINE void b3SolveBatchedNormalsW4( b3SolverBlock block, b3StepContext
 
                 const b3BodyStateW* bA = scratch.bodyA + g;
                 const b3BodyStateW* bB = scratch.bodyB + g;
-                b3Vec3W dp = b3SubVW( bB->dp, bA->dp );
-                b3FloatW separation = b3DotW( cm->normal, dp );
-                b3Vec3W normalA = b3InvRotateVectorW( bA->dq, cm->normal );
-                b3Vec3W normalB = b3InvRotateVectorW( bB->dq, cm->normal );
                 b3FloatW dotB, dotA;
-                b3Dot2W( normalB, slot->rB, normalA, slot->rA, &dotB, &dotA );
-                b3FloatW s = b3AddW( b3AddW( separation, b3SubW( dotB, dotA ) ),
+                b3Dot2W( scratch.normalB[g], slot->rB,
+                          scratch.normalA[g], slot->rA, &dotB, &dotA );
+                b3FloatW s = b3AddW( b3AddW( scratch.separation[g], b3SubW( dotB, dotA ) ),
                                       slot->cp->baseSeparations );
                 b3FloatW bias = b3MaxW( zeroW, b3MulW( s, inv_h ) );
                 b3Vec3W vrA = b3AddVW( bA->v, b3CrossW( bA->w, slot->rA ) );
@@ -1385,17 +1391,11 @@ B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* conte
 		b3BodyStateW bB = b3GatherBodies( states, c->indexB );
 
 		bool anyRolling = b3AllZeroW( c->rollingResistance ) == false;
-		b3Vec3W dp = b3SubVW( bB.dp, bA.dp );
 
 		b3ContactManifoldWide* manifolds = b3GetManifoldsW( c );
 		for ( int manifoldIndex = 0; manifoldIndex < manifoldCount; ++manifoldIndex )
 		{
 			b3ContactManifoldWide* cm = manifolds + manifoldIndex;
-
-			// Read the normal rather than put on stack to avoid register spills.
-			b3FloatW normalSeparation = b3DotW( cm->normal, dp );
-			b3Vec3W normalA = b3InvRotateVectorW( bA.dq, cm->normal );
-			b3Vec3W normalB = b3InvRotateVectorW( bB.dq, cm->normal );
 
 			b3FloatW totalNormalImpulse = zeroW;
 			b3FloatW totalTwistLimit = zeroW;
@@ -1417,6 +1417,13 @@ B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* conte
             else
 #endif
             {
+            // Do not redo transforms or normal separation when the VU0
+            // batch has already solved these contacts. These values
+            // do not vary between points of one manifold.
+            b3Vec3W dp = b3SubVW( bB.dp, bA.dp );
+            b3FloatW normalSeparation = b3DotW( cm->normal, dp );
+            b3Vec3W normalA = b3InvRotateVectorW( bA.dq, cm->normal );
+            b3Vec3W normalB = b3InvRotateVectorW( bB.dq, cm->normal );
 			// Normal constraints (EE/legacy single-record path).
 			for ( int pointIndex = 0; pointIndex < cm->pointCount; ++pointIndex )
 			{

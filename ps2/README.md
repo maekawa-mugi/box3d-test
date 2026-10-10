@@ -1178,3 +1178,22 @@ across successive contact points and scatters velocities once per
 group at the end of its batch, avoiding repeated gathers/scatters.
 Live validation always checks VU0 output finiteness, while full EE
 numeric recomputation is sampled to limit per-frame overhead.
+
+## VU0 throughput cleanup after the 400-awake MIX trial
+
+The prior screenshot compared falling boxes (OFF: PHYS 21.8 ms) with
+mostly settled/contacting boxes (MIX: PHYS 83.4 ms), so it did not
+isolate VU0 cost. Earlier captures had the opposite correlation. This
+change does not claim a measured speedup.
+
+Two unconditional sources of redundant work in the 64-lane integration
+are removed: (1) manifold normal separation and inverse-rotated normals
+are computed once per SIMD4 constraint and reused for all contact
+points, rather than recomputed for each point and again during the
+friction-only pass; (2) each VU0 record writes only its eight input QWs,
+not the five output QWs that microcode always overwrites. The original
+normal-contact ordering and VU1/GIF path are unchanged.
+
+An apples-to-apples runtime comparison needs matching contact counts
+and box states. The PS2 toolchain and PCSX2 performance/accuracy remain
+unverified for this optimization.
