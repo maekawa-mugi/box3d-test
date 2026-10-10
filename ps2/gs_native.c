@@ -241,8 +241,8 @@ void b3GsLine3(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
 #endif
 }
 
-void b3GsTriangle3(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
-                   b3GsPoint3 d,uint8_t r,uint8_t g,uint8_t blue)
+static void b3GsTriangle3Raw(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
+                              b3GsPoint3 d,uint8_t r,uint8_t g,uint8_t blue)
 {
 #if defined(BOX3D_GS_SOLID)
     int x0,y0,x1,y1,x2,y2;
@@ -280,6 +280,46 @@ void b3GsTriangle3(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
 #endif
 }
 
+
+// Clip 3D triangles against the near camera plane BEFORE projection.
+// Previously one near-plane vertex caused an entire 3D triangle to
+// disappear. This is especially visible with wide projected shadows.
+// The legacy solid/official ELFs retain their original renderer.
+void b3GsTriangle3(b3GsCamera c,b3GsPoint3 a,b3GsPoint3 b,
+                   b3GsPoint3 d,uint8_t r,uint8_t g,uint8_t blue)
+{
+#if defined(BOX3D_GS_RECEIVER_SHADOWS)
+    const float nearPlane=0.625f;
+    b3GsPoint3 in[3]={a,b,d},out[4];
+    int n=0;
+    b3GsPoint3 prev=in[2];
+    float dp=dot(sub(prev,c.eye),c.forward)-nearPlane;
+    int insidePrev=dp>=0.0f;
+    for(int i=0;i<3;++i)
+    {
+        b3GsPoint3 current=in[i];
+        float dc=dot(sub(current,c.eye),c.forward)-nearPlane;
+        int inside=dc>=0.0f;
+        if(inside!=insidePrev)
+        {
+            float t=dp/(dp-dc);
+            b3GsPoint3 p={
+                prev.x+t*(current.x-prev.x),
+                prev.y+t*(current.y-prev.y),
+                prev.z+t*(current.z-prev.z)
+            };
+            if(n<4)out[n++]=p;
+        }
+        if(inside && n<4)out[n++]=current;
+        prev=current;dp=dc;insidePrev=inside;
+    }
+    if(n<3)return;
+    for(int i=1;i+1<n;++i)
+        b3GsTriangle3Raw(c,out[0],out[i],out[i+1],r,g,blue);
+#else
+    b3GsTriangle3Raw(c,a,b,d,r,g,blue);
+#endif
+}
 
 // Native PS2 GS aesthetic layer, approximating the official demo's
 // sky/sun/ground/GUI presentation without GPU shaders. The upstream
