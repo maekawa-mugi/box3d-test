@@ -125,3 +125,37 @@ static inline size_t b3Vu1BuildVuOnlyStream(uint32_t* out,
     out[at++]=0;
     return at; // 104 words, 26 quadwords
 }
+
+/* Whole-frame VIF1 normal DMA: shared camera, one MSCAL per box.
+ * FLUSHA (0x13) waits for XGKICK GIF PATH1 before the next box
+ * overwrites the output buffer in VU1 DMEM[256..328]. */
+#define B3_VU1_MAX_STREAM_BOXES 400u
+#define B3_VU1_SUBMIT_MAX_WORDS (36u+68u*B3_VU1_MAX_STREAM_BOXES)
+static inline size_t b3Vu1BuildBoxBatchStream(
+    uint32_t* out,size_t capacityWords,const void* camera,
+    const void* boxInputs,size_t stride,size_t count,
+    uint32_t entryPc,int emitToGs)
+{
+    if(!out || !camera || !boxInputs || count==0 ||
+       count>B3_VU1_MAX_STREAM_BOXES || stride<224u ||
+       entryPc>0xffffu || capacityWords<36u+68u*count)return 0;
+    size_t n=b3Vu1BuildCameraStream(out,capacityWords,camera);
+    if(n!=36u)return 0;
+    const unsigned char* box=(const unsigned char*)boxInputs;
+    for(size_t i=0;i<count;++i,box+=stride)
+    {
+        out[n++]=0x01000101u; // STCYCL
+        out[n++]=0x6c084010u; // V4_32, NUM=8, VU DMEM[16]
+        memcpy(out+n,box,128u);n+=32u;
+        out[n++]=0;out[n++]=0;
+        out[n++]=0x01000101u;
+        out[n++]=0x6c064018u; // V4_32, NUM=6, VU DMEM[24]
+        memcpy(out+n,box+128u,96u);n+=24u;
+        out[n++]=0;out[n++]=0;
+        out[n++]=0x11000000u; // FLUSH
+        out[n++]=0x14000000u|entryPc; // MSCAL
+        out[n++]=emitToGs?0x13000000u:0x10000000u;
+        out[n++]=0; // NOP
+    }
+    return n;
+}

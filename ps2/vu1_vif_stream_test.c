@@ -57,6 +57,40 @@ int main(void){
     assert(out[100]==0x11000000u && out[101]==0x14000002u);
     assert(out[102]==0x10000000u && out[103]==0);
     assert(b3Vu1BuildVuOnlyStream(out,104,camera,vertices,colors,65536u)==0);
-    puts("PASS: VIF1 MPG, UNPACK, BOOT, VUONLY single-box normal DMA");
+    uint32_t oneBox[56],batch[104];
+    for(unsigned j=0;j<32;j++)oneBox[j]=vertices[j];
+    for(unsigned j=0;j<24;j++)oneBox[32+j]=colors[j];
+    assert(b3Vu1BuildBoxBatchStream(batch,104,camera,oneBox,224,1,2,0)==104);
+    assert(b3Vu1BuildVuOnlyStream(out,104,camera,vertices,colors,2)==104);
+    for(unsigned j=0;j<104;j++)assert(batch[j]==out[j]);
+    assert(b3Vu1BuildBoxBatchStream(batch,104,camera,oneBox,224,1,2,1)==104);
+    assert(batch[101]==0x14000002u && batch[102]==0x13000000u);
+    assert(b3Vu1BuildBoxBatchStream(batch,103,camera,oneBox,224,1,2,1)==0);
+    static uint32_t boxes[400*56],packet[B3_VU1_SUBMIT_MAX_WORDS];
+    for(unsigned j=0;j<400u*56u;j++)boxes[j]=j;
+    for(unsigned count=1;count<=400u;count*=2u)
+    {
+        size_t n=b3Vu1BuildBoxBatchStream(packet,B3_VU1_SUBMIT_MAX_WORDS,
+                                          camera,boxes,224,count,2,1);
+        assert(n==36u+68u*count && n%4u==0);
+        for(unsigned i=0;i<count;i++)
+        {
+            size_t at=36u+68u*i;
+            assert(packet[at]==0x01000101u && packet[at+1]==0x6c084010u);
+            for(unsigned j=0;j<32u;j++)assert(packet[at+2u+j]==boxes[i*56u+j]);
+            assert(packet[at+36u]==0x01000101u && packet[at+37u]==0x6c064018u);
+            for(unsigned j=0;j<24u;j++)
+                assert(packet[at+38u+j]==boxes[i*56u+32u+j]);
+            assert(packet[at+64u]==0x11000000u);
+            assert(packet[at+65u]==0x14000002u);
+            assert(packet[at+66u]==0x13000000u && packet[at+67u]==0u);
+        }
+    }
+    assert(b3Vu1BuildBoxBatchStream(packet,B3_VU1_SUBMIT_MAX_WORDS,
+                                    camera,boxes,224,400,2,1)==B3_VU1_SUBMIT_MAX_WORDS);
+    assert(b3Vu1BuildBoxBatchStream(packet,B3_VU1_SUBMIT_MAX_WORDS-1,
+                                    camera,boxes,224,400,2,1)==0);
+    puts("PASS: normal DMA 1/8/400 boxes, PATH1 FLUSHA");
+
     return 0;
 }

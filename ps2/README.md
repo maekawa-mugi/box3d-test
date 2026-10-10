@@ -845,3 +845,26 @@ beyond BOOT, this change does not claim to solve it. Press only
 through BOOT and confirm `VU1 BOOT OK` before selecting VUONLY.
 Multi-box XGKICK still uses packet2, is NOT proven, and should not
 be attempted until VUONLY is stable.
+
+## 2026-10-11: all VU1 box modes use normal DMA
+
+The tester reached VUONLY but the subsequent XGKICK-enabled BOX 1
+stage reset PCSX2 to BIOS. Inspecting the implementation revealed
+that BOX 1, BOX 8 and BOX 400 switched back to the earlier packet2
+REF/TTE chain path even though INIT, VIF, BOOT and VUONLY used
+normal DMA. The legacy submission path is removed.
+
+Each VIF1 normal DMA transfer now contains one shared camera and
+per-box vertex/color UNPACKs, FLUSH, MSCAL, FLUSHA and NOP for
+XGKICK modes, or FLUSHE for no-XGKICK diagnostics. FLUSHA waits
+for the GIF PATH1 output before overwriting the common VU1 DMEM
+GIF buffer. A 400-box submission fits in 6,809 QWs. The function
+also waits for VIF1 STAT to indicate idle after DMAC completion
+before GS HUD PATH3 DMA. It reports failure rather than submitting
+an unchecked packet. Logs include `submit_normal_dma_begin` and
+`submit_normal_dma_done` upon first use of each mode.
+
+The existing host test now covers byte-exact VUONLY one-box input,
+plus 1/8/400-box command layout and FLUSHA. This change does NOT
+establish that actual XGKICK/GIF rendering is working on PCSX2.
+Test BOX 1 for stability before advancing to 8 and 400.

@@ -11,9 +11,6 @@
 #include <gif_tags.h>
 #include <gs_gp.h>
 #include <kernel.h>
-#include <packet2.h>
-#include <packet2_utils.h>
-#include <packet2_vif.h>
 #include <vif_registers.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -27,13 +24,12 @@ extern u32 B3Vu1Boxes_CodeStart __attribute__((section(".vudata")));
 extern u32 B3Vu1Boxes_CodeEnd __attribute__((section(".vudata")));
 extern u32 B3Vu1Boxes_RunStart __attribute__((section(".vudata")));
 
-enum { B3_VU1_VIF_QWORDS=8192, B3_VU1_CODE_WORDS=4608 };
+enum { B3_VU1_CODE_WORDS=4608 };
 static _Alignas(64) uint32_t s_mpgStream[B3_VU1_CODE_WORDS];
 static _Alignas(64) uint32_t s_staticStream[160];
 static _Alignas(64) uint32_t s_cameraTestStream[36];
 static _Alignas(64) uint32_t s_bootTestStream[4];
-static _Alignas(64) uint32_t s_vuOnlyStream[104];
-static packet2_t* s_vifPacket;
+static _Alignas(64) uint32_t s_submitStream[B3_VU1_SUBMIT_MAX_WORDS];
 static _Alignas(64) b3Vu1BoxInput s_upload[B3_VU1_MAX_BOXES];
 static _Alignas(64) float s_camera[7][4];
 static _Alignas(64) uint32_t s_indices[36][4];
@@ -223,17 +219,6 @@ int b3Vu1BoxesVerify(void)
     puts("BOX3D_VU1_IMAGE,mpg_dma_readback=ok");
     puts("BOX3D_VU1_IMAGE,readback=ok");
 
-    // The large DMA-chain packet for per-box geometry is allocated only
-    // after MPG readback succeeds. It is not needed by the INIT stage.
-    if(!s_vifPacket)
-        s_vifPacket=packet2_create(B3_VU1_VIF_QWORDS,P2_TYPE_NORMAL,
-                                   P2_MODE_CHAIN,1);
-    if(!s_vifPacket)
-    {
-        puts("BOX3D_VU1_FAIL,geometry_packet_allocation");
-        s_status="VU1 FAIL ALLOC";
-        return 0;
-    }
     s_ready=1;
     s_status="VU1 READY DMA";
     puts("BOX3D_VU1_READY,vif1_dma=1,vu1_micro=1,xgkick=1,triangles_per_box=12,micro_cpu_fallback=disabled");
@@ -403,90 +388,53 @@ int b3Vu1BoxesBootTest(void)
 
 int b3Vu1BoxesSubmit(void)
 {
-    if(!s_ready || s_count==0)return 0;
-    // Isolate the first full VU transform from legacy packet2 chain
-    // assertions. In VUONLY there is exactly one box and XGKICK=0.
-    // Use the already verified normal-DMA VIF1 path instead.
-    if(!s_emitToGs && s_count==1)
+    if(!s_ready || s_count<=0)return 0;
+    const size_t n=b3Vu1BuildBoxBatchStream(
+        s_submitStream,B3_VU1_SUBMIT_MAX_WORDS,s_camera,
+        s_upload,sizeof(s_upload[0]),(size_t)s_count,
+        s_mainProgramPc,s_emitToGs);
+    if(!n || (n&3u))
     {
-        const size_t words=b3Vu1BuildVuOnlyStream(
-            s_vuOnlyStream,104,s_camera,
-            s_upload[0].vertices,s_upload[0].colors,s_mainProgramPc);
-        if(words!=104u)
-        {
-            puts("BOX3D_VU1_FAIL,vuonly_stream_layout");
-            s_ready=0;
-            s_status="VU1 FAIL VU PACK";
-            return -1;
-        }
-        puts("BOX3D_VU1_PHASE,vuonly_normal_dma_begin");
-        if(dma_channel_send_normal(DMA_CHANNEL_VIF1,s_vuOnlyStream,
-                                   (int)(words/4u),0,0)<0 ||
-           dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
-        {
-            printf("BOX3D_VU1_FAIL,vuonly_normal_dma_timeout,vif_stat=%08x,vif_err=%08x\n",
-                   (unsigned)VIF1_STAT,(unsigned)VIF1_ERR);
-            s_ready=0;
-            s_status="VU1 FAIL VU DMA";
-            return -1;
-        }
-        printf("BOX3D_VU1_PHASE,vuonly_normal_dma_done,vif_stat=%08x,vif_err=%08x\n",
-               (unsigned)VIF1_STAT,(unsigned)VIF1_ERR);
-        s_status="VU1 VUONLY OK";
-        ++s_submissionCount;
-        return 1;
-    }
-    packet2_reset(s_vifPacket,0);
-    packet2_utils_vu_add_unpack_data(s_vifPacket,0,s_camera,7,0);
-    for(int i=0;i<s_count;++i)
-    {
-        // DMA REF sources stay live and aligned throughout the transfer.
-        packet2_utils_vu_add_unpack_data(s_vifPacket,16,
-                                         s_upload[i].vertices,8,0);
-        packet2_utils_vu_add_unpack_data(s_vifPacket,24,
-                                         s_upload[i].colors,6,0);
-        // FLUSH+MSCAL ensures input for the next box cannot overwrite
-        // VU1 DMEM while the previous microprogram is still running.
-        packet2_utils_vu_add_start_program(s_vifPacket,s_mainProgramPc);
-        // Single output GIF buffer in VU1 DMEM. FLUSHA MUST wait
-        // for XGKICK/PATH1 to finish before a following MSCAL writes
-        // the same 256..328 output qwords. This barrier lives on VIF1,
-        // so the EE does not poll every box.
-        packet2_chain_open_cnt(s_vifPacket,0,0,0);
-        if(s_emitToGs)
-            packet2_vif_flusha(s_vifPacket,0);
-        else
-            packet2_vif_flushe(s_vifPacket,0);
-        packet2_vif_nop(s_vifPacket,0);
-        packet2_vif_nop(s_vifPacket,0);
-        packet2_vif_nop(s_vifPacket,0);
-        packet2_chain_close_tag(s_vifPacket);
-    }
-    packet2_chain_open_cnt(s_vifPacket,0,0,0);
-    // FLUSHA is a GIF PATH1 completion barrier. The following EE GIF
-    // HUD packet cannot overtake VU1 XGKICK data.
-    if(s_emitToGs)
-        packet2_vif_flusha(s_vifPacket,0);
-    else
-        packet2_vif_flushe(s_vifPacket,0);
-    packet2_vif_nop(s_vifPacket,0);
-    packet2_vif_nop(s_vifPacket,0);
-    packet2_vif_nop(s_vifPacket,0);
-    packet2_chain_close_tag(s_vifPacket);
-    packet2_utils_vu_add_end_tag(s_vifPacket);
-    if(s_submissionCount<3)
-        printf("BOX3D_VU1_PHASE,before_vif1_dma,boxes=%d,qwords=%u\n",
-               s_count,(unsigned)packet2_get_qw_count(s_vifPacket));
-    dma_channel_send_packet2(s_vifPacket,DMA_CHANNEL_VIF1,1);
-    if(dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
-    {
-        puts("BOX3D_VU1_FAIL,vif1_dma_timeout");
-        s_status="VU1 FAIL SUBMIT";
+        printf("BOX3D_VU1_FAIL,submit_layout,boxes=%d,words=%u\n",
+               s_count,(unsigned)n);
+        s_status="VU1 FAIL PACK";
         s_ready=0;
         return -1;
     }
-    if(s_submissionCount<3)
-        puts("BOX3D_VU1_PHASE,after_vif1_dma");
+    static int priorEmit=-1,priorCount=-1;
+    const int logNow=s_submissionCount<3 ||
+        priorEmit!=s_emitToGs || priorCount!=s_count;
+    priorEmit=s_emitToGs;priorCount=s_count;
+    if(logNow)
+        printf("BOX3D_VU1_PHASE,submit_normal_dma_begin,boxes=%d,emit=%d,qwords=%u\n",
+               s_count,s_emitToGs,(unsigned)(n/4u));
+    if(dma_channel_send_normal(DMA_CHANNEL_VIF1,s_submitStream,
+                               (int)(n/4u),0,0)<0 ||
+       dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+    {
+        printf("BOX3D_VU1_FAIL,submit_dma_timeout,vif_stat=%08x,vif_err=%08x\n",
+               (unsigned)VIF1_STAT,(unsigned)VIF1_ERR);
+        s_status="VU1 FAIL DMA";
+        s_ready=0;
+        return -1;
+    }
+    // Wait for the final VIF FLUSHA (including all GIF PATH1 traffic)
+    // before returning to the ordinary GIF PATH3 HUD submission.
+    unsigned wait=B3_VU1_DMA_WAIT_LIMIT;
+    while(wait && ((VIF1_STAT&3u)!=0u ||
+                    ((VIF1_STAT>>24)&31u)!=0u))--wait;
+    if(!wait || (VIF1_STAT&0x3000u)!=0u)
+    {
+        printf("BOX3D_VU1_FAIL,submit_vif_busy,vif_stat=%08x,vif_err=%08x\n",
+               (unsigned)VIF1_STAT,(unsigned)VIF1_ERR);
+        s_status="VU1 FAIL VIF IDLE";
+        s_ready=0;
+        return -1;
+    }
+    if(logNow)
+        printf("BOX3D_VU1_PHASE,submit_normal_dma_done,boxes=%d,emit=%d,vif_stat=%08x\n",
+               s_count,s_emitToGs,(unsigned)VIF1_STAT);
+    s_status=s_emitToGs?"VU1 BOX DMA OK":"VU1 VUONLY OK";
     ++s_submissionCount;
     return s_count;
 }
