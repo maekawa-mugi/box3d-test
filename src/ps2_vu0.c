@@ -53,7 +53,7 @@ unsigned b3Ps2GetVU0SharedDotCount( void )
 
 void b3Ps2SetVU0Enabled( int mode )
 {
-    s_vu0Mode = ( mode >= 0 && mode <= 5 ) ? mode : 0;
+    s_vu0Mode = ( mode >= 0 && mode <= 6 ) ? mode : 0;
 }
 
 int b3Ps2GetVU0Enabled( void )

@@ -1262,10 +1262,10 @@ B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* conte
 
 				b3FloatW newImpulse, deltaImpulse;
 #if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
-				if ( b3Ps2GetVU0Enabled() == 5 )
+				bool solvedOnVu0 = false;
+				int vu0Mode = b3Ps2GetVU0Enabled();
+				if ( vu0Mode == 5 || vu0Mode == 6 )
 				{
-					// Fuse normal bias, effective mass, clamp, delta and
-					// three accumulators into one register-resident VU0 call.
 					b3Ps2VU0NormalSolveData s;
 					b3StoreW4( s.oldImpulse, cp->normalImpulses );
 					b3StoreW4( s.normalMass, cp->normalMasses );
@@ -1275,18 +1275,35 @@ B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* conte
 					b3StoreW4( s.oldManifoldTotal, totalNormalImpulse );
 					b3StoreW4( s.oldTwistLimit, totalTwistLimit );
 					b3StoreW4( s.leverArm, cp->leverArms );
-					b3Ps2VU0NormalSolve( &s );
-					newImpulse = b3LoadW4( s.newImpulse );
-					deltaImpulse = b3LoadW4( s.deltaImpulse );
-					cp->normalImpulses = newImpulse;
-					cp->totalNormalImpulses = b3LoadW4( s.newPointTotal );
-					totalNormalImpulse = b3LoadW4( s.newManifoldTotal );
-					totalTwistLimit = b3LoadW4( s.newTwistLimit );
+					if ( vu0Mode == 5 )
+					{
+						b3Ps2VU0NormalSolve( &s );
+						solvedOnVu0 = true;
+					}
+					else
+					{
+						solvedOnVu0 = b3Vu0MicroNormalSolve4( &s ) != 0;
+						if ( !solvedOnVu0 )
+						{
+							// Never consume unchecked micro output. Restore
+							// scalar solver for all subsequent contacts.
+							b3Ps2SetVU0Enabled( 0 );
+						}
+					}
+					if ( solvedOnVu0 )
+					{
+						newImpulse = b3LoadW4( s.newImpulse );
+						deltaImpulse = b3LoadW4( s.deltaImpulse );
+						cp->normalImpulses = newImpulse;
+						cp->totalNormalImpulses = b3LoadW4( s.newPointTotal );
+						totalNormalImpulse = b3LoadW4( s.newManifoldTotal );
+						totalTwistLimit = b3LoadW4( s.newTwistLimit );
+					}
 				}
-				else
+				if ( !solvedOnVu0 )
 #endif
 				{
-					// Original scalar operations unchanged for modes 0-4.
+					// Reference scalar branch, also used after micro failure.
 					b3FloatW negImpulse = b3MulW( cp->normalMasses, b3AddW( vn, velocityBias ) );
 					newImpulse = b3MaxW( b3SubW( cp->normalImpulses, negImpulse ), zeroW );
 					deltaImpulse = b3SubW( newImpulse, cp->normalImpulses );

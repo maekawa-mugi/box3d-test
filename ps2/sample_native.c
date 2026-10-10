@@ -191,10 +191,21 @@ static int pad_nav_poll(void)
     }
     if(pressed&PAD_DOWN)
     {
-        s_vu0Mode=(s_vu0Mode==0)?5:0;
+        // Three physics paths: original EE scalar (0), legacy COP2
+        // macro (5), actual VU0 micro VCALLMS (6). Mode 6 must never
+        // become available until the independent 64-lane DIFF passed.
+        int next=(s_vu0Mode==0)?5:(s_vu0Mode==5)?6:0;
+        if(next==6 &&
+           (s_scene.kind<8 || s_vu0MicroStage!=4 ||
+            !s_vu0MicroResult || !b3Vu0MicroIsReady()))
+        {
+            puts("BOX3D_VU0_LIVE_BLOCKED,reason=select_diff_required");
+            next=0;
+        }
+        s_vu0Mode=next;
         b3Ps2SetVU0Enabled(s_vu0Mode);
-        printf("BOX3D_PHYS_MODE,substeps=%d,vu0=%d\n",
-               s_simSubsteps,s_vu0Mode);
+        printf("BOX3D_PHYS_MODE,substeps=%d,vu0=%d,live_micro=%d\n",
+               s_simSubsteps,s_vu0Mode,s_vu0Mode==6);
     }
     if(pressed&PAD_TRIANGLE)
     {
@@ -1470,10 +1481,13 @@ static void render_official_hud(void)
         static const char* const stages[]={
             "NOT INIT","ARM","UPLOAD","VERIFY","DIFF"
         };
-        snprintf(vu0Line,sizeof(vu0Line),"VU0 %s %s",
-                 stages[s_vu0MicroStage],
-                 s_vu0MicroStage>1?
-                    (s_vu0MicroResult?"OK":"FAIL"):"");
+        if(b3Ps2GetVU0Enabled()==6)
+            snprintf(vu0Line,sizeof(vu0Line),"VU0 LIVE MICRO");
+        else
+            snprintf(vu0Line,sizeof(vu0Line),"VU0 %s %s",
+                     stages[s_vu0MicroStage],
+                     s_vu0MicroStage>1?
+                        (s_vu0MicroResult?"OK":"FAIL"):"");
         b3GsOverlayPanel(460,164,166,70);
         b3GsOverlayText(468,174,"SELECT MICRO",227,215,143);
         b3GsOverlayText(468,205,vu0Line,
@@ -1749,7 +1763,7 @@ int main(void)
     setvbuf(stdout,NULL,_IONBF,0);
     puts("BOX3D_SAMPLE_START,gs=native_gif,physics=Box3D");
 #if defined(BOX3D_PS2_UNIFIED)
-    puts("BOX3D_PAD_EXTRA,UP=substeps,DOWN=vu0_macro_0_5,SQUARE=shadow,CROSS=sleep,SELECT=vu0_micro_arm_upload_verify_run,TRIANGLE=vu1_diagnostics");
+    puts("BOX3D_PAD_EXTRA,UP=substeps,DOWN=vu0_0_5_6_after_diff,SQUARE=shadow,CROSS=sleep,SELECT=vu0_micro_arm_upload_verify_run,TRIANGLE=vu1_diagnostics");
 #endif
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
@@ -1780,7 +1794,7 @@ int main(void)
     // until the user enters the explicit INIT diagnostic stage.
     s_vu1Ready=0;
     puts("BOX3D_VU1_STARTUP,lazy=1,ready=0,ee_safe=1");
-    puts("BOX3D_VU1_BUILD,revision=vu1r8_sleep_shadow_cache,vu0=micro_stage1");
+    puts("BOX3D_VU1_BUILD,revision=vu1r8_sleep_shadow_cache,vu0=micro_live2");
     puts("BOX3D_VU1_SAFE_DEFAULT,ee_geometry=1,triangle=ack_path3_init_arm_init_verify_arm_verify_vif_boot");
 #endif
 #if defined(BOX3D_PS2_PAD_NAV)
@@ -1822,6 +1836,12 @@ int main(void)
 #endif
 #if defined(BOX3D_PS2_UNIFIED)
         b3World_Step(s_scene.world,1.0f/60.0f,s_simSubsteps);
+        if(s_vu0Mode!=b3Ps2GetVU0Enabled())
+        {
+            s_vu0Mode=b3Ps2GetVU0Enabled();
+            printf("BOX3D_VU0_LIVE_FALLBACK,mode=%d,status=%s\n",
+                   s_vu0Mode,b3Vu0MicroStatus());
+        }
 #else
         b3World_Step(s_scene.world,1.0f/60.0f,4);
 #endif
@@ -1862,7 +1882,7 @@ int main(void)
             if(s_perfSamples>=60)
             {
                 double divisor=294912.0*(double)s_perfSamples;
-                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_shadow_ms=%.3f,avg_box_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u,substeps=%d,vu0=%d,shadow_mode=%d,vu1_enabled=%d,vu1_boxes=%d,sleep=%d,awake=%d\n",
+                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_shadow_ms=%.3f,avg_box_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u,substeps=%d,vu0=%d,shadow_mode=%d,vu1_enabled=%d,vu1_boxes=%d,sleep=%d,awake=%d,vu0_micro_calls=%u\n",
                        s_scene.kind,(unsigned long)s_frame,s_scene.count-1,
                        (double)s_sumPhysicsTicks/divisor,
                        (double)s_sumBuildTicks/divisor,
@@ -1874,10 +1894,11 @@ int main(void)
                                 s_sumGsTicks)/
                          (4915200.0*(double)s_perfSamples/100.0),
                        (double)s_lastVsyncMs,b3GsGetLastGifQwords(),
-                       s_simSubsteps,s_vu0Mode,s_shadowVisualMode,
+                       s_simSubsteps,b3Ps2GetVU0Enabled(),s_shadowVisualMode,
                         s_vu1Ready&&s_vu1Budget>0,s_lastVu1Boxes,
                        b3World_IsSleepingEnabled(s_scene.world),
-                       b3World_GetAwakeBodyCount(s_scene.world));
+                       b3World_GetAwakeBodyCount(s_scene.world),
+                       b3Vu0MicroGetLiveCalls());
                 b3Counters counters=b3World_GetCounters(s_scene.world);
                 printf("BOX3D_PHYS_PROFILE,scene=%d,frame=%lu,substeps=%d,vu0=%d,pairs_ms=%.3f,collide_ms=%.3f,solve_ms=%.3f,constraints_ms=%.3f,contacts=%d,awake=%d\n",
                        s_scene.kind,(unsigned long)s_frame,

@@ -2,6 +2,7 @@
 // VU0 micro-mode contact probe. The existing Box3D solver stays unchanged
 // until PCSX2 verifies this actual VCALLMS path and its numeric outputs.
 #include "vu0_micro_solver.h"
+#include "../src/ps2_vu0.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -23,6 +24,9 @@ extern uint32_t B3Vu0Contacts_CodeEnd __attribute__((section(".vudata")));
 static int s_uploaded,s_verified;
 static const char* s_status="VU0 MICRO NOT INIT";
 static _Alignas(64) b3Vu0MicroBlock s_microData;
+static unsigned s_liveCalls;
+_Static_assert(sizeof(b3Ps2VU0NormalSolveData)==sizeof(b3Vu0MicroRecord),
+               "Box3D SIMD4 normal impulse ABI must match VU0 micro record");
 
 static int b3Vu0WaitIdle(void)
 {
@@ -96,15 +100,18 @@ int b3Vu0MicroVerify(void)
     return 1;
 }
 
-static int b3Vu0MicroRunBlock(b3Vu0MicroBlock* block)
+static int b3Vu0MicroRunBlock(b3Vu0MicroBlock* block,unsigned groups)
 {
-    if(!s_verified || !b3Vu0WaitIdle())
+    if(!s_verified || groups==0 || groups>B3_VU0_MICRO_GROUPS ||
+       !b3Vu0WaitIdle())
         return 0;
-    // Use volatile 32-bit stores into VU0 4KB DMEM. The 16 records
-    // are 209 QWs, so the entire block fits with 752 bytes to spare.
+    // DMA is not required for VU0: the mapped 4KB VU0 data window
+    // contains a bounded control QW followed by N 13-QW records.
+    block->control[0]=groups;
     const uint32_t* in=(const uint32_t*)block;
     volatile uint32_t* vu=B3_VU0_DATA_BASE;
-    for(size_t i=0;i<sizeof(*block)/4u;++i)vu[i]=in[i];
+    const size_t inputWords=4u+groups*B3_VU0_MICRO_RECORD_QWS*4u;
+    for(size_t i=0;i<inputWords;++i)vu[i]=in[i];
     __asm__ __volatile__("sync.l" ::: "memory");
     __asm__ __volatile__("vcallms 0" ::: "memory");
     if(!b3Vu0WaitIdle())
@@ -113,8 +120,71 @@ static int b3Vu0MicroRunBlock(b3Vu0MicroBlock* block)
         s_status="VU0 FAIL EXEC TIMEOUT";
         return 0;
     }
+    // No need to read input back: only five output QWs per group.
     uint32_t* out=(uint32_t*)block;
-    for(size_t i=0;i<sizeof(*block)/4u;++i)out[i]=vu[i];
+    for(unsigned g=0;g<groups;++g)
+    {
+        const size_t index=4u+g*B3_VU0_MICRO_RECORD_QWS*4u+8u*4u;
+        for(unsigned i=0;i<20u;++i)out[index+i]=vu[index+i];
+    }
+    return 1;
+}
+
+int b3Vu0MicroIsReady(void){return s_verified;}
+unsigned b3Vu0MicroGetLiveCalls(void){return s_liveCalls;}
+
+// First real Box3D contact-solver connection. One SIMD4 constraint at
+// a time is deliberately conservative and may be MUCH slower than EE;
+// this is the correctness/throughput baseline before batching.
+int b3Vu0MicroNormalSolve4(b3Ps2VU0NormalSolveData* record)
+{
+    if(!record || !s_verified)return 0;
+    memcpy(&s_microData.record[0],record,sizeof(*record));
+    if(!b3Vu0MicroRunBlock(&s_microData,1u))return 0;
+    // Validate real moving-contact inputs on startup, rather than
+    // trusting a differential probe made only from binary fractions.
+    // The comparison is bounded: first 64 calls and one every 1024.
+    if(s_liveCalls<64u || (s_liveCalls&1023u)==0u)
+    {
+        const b3Vu0MicroRecord* got=&s_microData.record[0];
+        for(unsigned lane=0;lane<4u;++lane)
+        {
+            float old=record->oldImpulse[lane];
+            float next=old-record->normalMass[lane]*
+                (record->normalSpeed[lane]+record->velocityBias[lane]);
+            if(next<0.0f)next=0.0f;
+            const float ref[5]={
+                next,
+                next-old,
+                record->oldPointTotal[lane]+next,
+                record->oldManifoldTotal[lane]+next,
+                record->oldTwistLimit[lane]+record->leverArm[lane]*next
+            };
+            const float actual[5]={
+                got->newImpulse[lane],got->deltaImpulse[lane],
+                got->newPointTotal[lane],got->newManifoldTotal[lane],
+                got->newTwistLimit[lane]
+            };
+            for(unsigned k=0;k<5u;++k)
+            {
+                // EE COP1 and VU0 can round differently on real values;
+                // allow a relative error, but never allow NaN or INF.
+                float tol=0.002f*(1.0f+fabsf(ref[k]));
+                if(!isfinite(actual[k]) || !isfinite(ref[k]) ||
+                   fabsf(actual[k]-ref[k])>tol)
+                {
+                    printf("BOX3D_VU0_FAIL,live_diff,call=%u,lane=%u,field=%u,ref=%f,got=%f\n",
+                           s_liveCalls,lane,k,(double)ref[k],
+                           (double)actual[k]);
+                    s_verified=0;
+                    s_status="VU0 FAIL LIVE DIFF";
+                    return 0;
+                }
+            }
+        }
+    }
+    memcpy(record,&s_microData.record[0],sizeof(*record));
+    ++s_liveCalls;
     return 1;
 }
 
@@ -142,7 +212,7 @@ int b3Vu0MicroDifferentialTest(void)
     memcpy(&expected,&s_microData,sizeof(expected));
     b3Vu0MicroReference(&expected);
     puts("BOX3D_VU0_PHASE,micro_execute_begin,groups=16,lanes=64");
-    if(!b3Vu0MicroRunBlock(&s_microData))
+    if(!b3Vu0MicroRunBlock(&s_microData,B3_VU0_MICRO_GROUPS))
     {
         puts("BOX3D_VU0_FAIL,micro_execution");
         return 0;
@@ -184,4 +254,8 @@ const char* b3Vu0MicroStatus(void){return s_status;}
 int b3Vu0MicroUpload(void){return 0;}
 int b3Vu0MicroVerify(void){return 0;}
 int b3Vu0MicroDifferentialTest(void){return 0;}
+int b3Vu0MicroIsReady(void){return 0;}
+unsigned b3Vu0MicroGetLiveCalls(void){return 0;}
+int b3Vu0MicroNormalSolve4(b3Ps2VU0NormalSolveData* data)
+{(void)data;return 0;}
 #endif

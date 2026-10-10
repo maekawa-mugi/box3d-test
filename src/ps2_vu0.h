@@ -22,6 +22,8 @@ typedef struct b3Ps2VU0Dot4Data
 // 3: same paired mode plus preparation-stage paired dots.
 // 4: mode 3 plus shared-input fused two-dot VU0 friction calculations.
 // 5: mode 4 plus a fused normal contact impulse/update macro kernel.
+// 6: real VU0 micro-mode normal impulse via VCALLMS (only after DIFF OK).
+// This is an opt-in experimental correctness mode, not yet fast batching.
 // This isolates additional scheduling/data-transfer gains from mode 2.
 // Mode 0 remains default. Change only between completed world steps.
 void b3Ps2SetVU0Enabled( int enabled );
@@ -90,6 +92,12 @@ typedef struct b3Ps2VU0NormalSolveData
 } b3Ps2VU0NormalSolveData;
 
 void b3Ps2VU0NormalSolve( b3Ps2VU0NormalSolveData* data );
+
+// These functions live in ps2/vu0_micro_solver.c, linked only into the
+// native PS2 ELF. The physics library references them in mode 6 only.
+int b3Vu0MicroIsReady( void );
+unsigned b3Vu0MicroGetLiveCalls( void );
+int b3Vu0MicroNormalSolve4( b3Ps2VU0NormalSolveData* data );
 unsigned b3Ps2GetVU0NormalSolveCount( void );
 
 // Compute-only saturation probe: 8 independent VF accumulators, each with

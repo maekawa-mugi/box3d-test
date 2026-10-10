@@ -977,3 +977,60 @@ friction and all substeps. Full 400-awake 60 FPS requires
 benchmarked batched graph-color solve integration and
 additional shadow optimizations; VU0 64-lane micro
 correctness is only the first hardware milestone.
+
+## 2026-10-11: VU0 micro-mode live contact-normal solver (experimental mode 6)
+
+The user confirmed `VU0 DIFF OK` on BENCH 144 and BENCH 256 in
+PCSX2 after VU0 micro upload, readback and the 64-lane numerical
+test. This commit makes the first **real Box3D solver call site**
+use the VU0 microprogram. The existing solver path remains
+available for direct baseline comparison.
+
+- `src/contact_solver_wide.inl`: PS2 SIMD4 normal-impulse and three
+  accumulators can now use `b3Vu0MicroNormalSolve4` instead of COP1
+  scalar or COP2 macro. The body velocity updates, friction, contact
+  graph, broadphase, and other constraint passes remain on EE.
+- The VU0 microprogram reads a **1..16 group count** from
+  DMEM QW[0].x. Standalone DIFF continues to process all 16 groups.
+  The live integration starts with **one group (4 lanes) per VCALLMS**,
+  transferring only the necessary data and reading back five output
+  QWs. This is explicitly a correctness milestone rather than
+  the fast batched solver architecture.
+- On failure to run VU0, the contact is recomputed by the scalar
+  reference and the global solver mode reverts to 0, avoiding
+  consumption of unchecked output.
+- BENCH control: after SELECT is pressed four times and `VU0 DIFF OK`
+  appears, press DOWN to cycle `0 -> 5 -> 6 -> 0`. Mode 5 is the
+  prior COP2 macro path; mode 6 sends the *real* Box3D contact-normal
+  computation through VU0 micro. Before DIFF, attempts to enter
+  mode 6 are rejected and return to the EE scalar mode 0.
+- When mode 6 is active the HUD says `VU0 LIVE MICRO`; the 60-frame
+  `BOX3D_PERF` log includes `vu0_micro_calls` to prove that the
+  real physics solver used VCALLMS and not just the standalone DIFF.
+  The value is a cumulative counter, not a per-frame average.
+- VU1R8 microprogram, XGKICK geometry, shadow system and S4/S2
+  physics quality remain unchanged. No VU0 microcode is accessed on
+  ELF startup, and the safe default remains mode 0.
+
+**CAUTION:** mode 6 may initially perform much *worse* than mode 0
+because one VCALLMS and EE/VU0 data exchange is required for
+every 4-lane contact solve. It has not been timed or numerically
+validated against moving contact bodies in PCSX2. Test BENCH 64
+first (S4 SL0), then BENCH 144 and compare `PHYS`, stability and
+contacts using DOWN mode 0 versus mode 6. Do not use BOX 400 in
+mode 6 until lower contact counts are stable. If the runtime
+shows `VU0 LIVE MICRO` with `vu0_micro_calls > 0` but worse
+FPS, that is an expected sign that **independent graph-colored
+contact batching, fewer synchronization points and EE overlap**
+are the necessary next optimization. This does not demonstrate
+400-awake 60 FPS yet.
+
+Additional live safety: the first 64 real contact-group executions,
+then one call out of each 1024, recompute the five results using the
+EE scalar reference and reject large relative disagreement or
+non-finite values. A failing call reverts to scalar mode 0 and logs
+`BOX3D_VU0_FAIL,live_diff`; the HUD reads the *actual* solver mode,
+not a stale pad variable. Because the EE FPU and VU0 round differently,
+the guard is tolerant (0.2% relative plus absolute) rather than
+bit-exact. This checks the first integration step, not full physics
+determinism.

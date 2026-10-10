@@ -4,7 +4,8 @@
 ; Inputs +0..7: old, mass, speed, bias, pointSum, manifoldSum,
 ;               twistSum, leverArm
 ; Outputs +8..12: new, delta, pointSum, manifoldSum, twistSum.
-; One microprogram invocation covers 16 x 4 = 64 constraint lanes.
+; Each microprogram invocation covers 1..16 independent SIMD groups
+; (4..64 contact lanes). Group count comes from DMEM[0].x.
 ; Never use VF00.w as zero: VF00.w is constant 1.
         .vu
         .align 4
@@ -12,7 +13,9 @@
         .global B3Vu0Contacts_CodeEnd
 B3Vu0Contacts_CodeStart:
         NOP                                iaddiu VI01,VI00,1
-        NOP                                iaddiu VI04,VI00,16
+        ; Group count is held in VU0 DMEM[0].x, 1..16.
+        ; The original 16-group differential path uses the same code.
+        NOP                                ilw.x VI04,0(VI00)
 vu0_contact_loop:
         NOP                                lq VF01,0(VI01)
         NOP                                lq VF02,1(VI01)
