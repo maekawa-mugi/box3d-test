@@ -10,7 +10,7 @@ with full parity.
 
 | Upstream group | Registered entries | PS2 C17 visual scenes | Port notes |
 | --- | ---: | ---: | --- |
-| Benchmark | 24 | 0 | Many large stress scenarios need scene-adaptive mesh and batched VU1 path |
+| Benchmark | 24 | 4 adapted presets | New Box3D dynamic-grid stress pages: 64/144/256/400 boxes; not literal upstream pyramids |
 | Bodies | 12 | 1 | Spinning Book adapted; full body/joint/debug controls pending |
 | Character | 4 | 0 | Controller and capsule/mover debug display pending |
 | Collision | 14 | 0 | World casts and contact debug geometry pending |
@@ -31,9 +31,9 @@ with full parity.
 | Stacking | 14 | 1 | Box Stack 40 cubes; others pending |
 | Tree | 1 | 0 | Dynamic tree debug visualization pending |
 | World | 4 | 1 | Far Stack origin preset; large-offset slider pending |
-| **Total** | **185** | **8** | Many categories still missing |
+| **Total** | **185** | **12 pages (8 visual + 4 stress)** | Only eight visual ports correspond to upstream sample families; stress grids are adapted variants |
 
-The eight progressive viewer scenes are:
+The unified 640x480p viewer now contains twelve left/right paginated scenes. Its original eight visual scenes are:
 `Stacking/Box Stack` (40 boxes),
 `Shapes/Inclined Plane` (adapted),
 `Bodies/Spinning Book` (3 angular axes),
@@ -75,3 +75,44 @@ The 640x480p 4tap runner is the staging ground for this work, NOT the
 claim that all 185 desktop registrations have been implemented.
 Progress should be recorded against this table as new scenes are
 verified on actual PCSX2 builds.
+
+## Unified 480p PCSS runtime and box stress scenarios
+
+This viewer **only** builds `ps2/box3d_ps2.elf` with
+`BOX3D_PS2_UNIFIED`: 640x480p progressive GS, native PCSS-style
+contact-hardening shadows using bilinear 4-tap PCF at contact
+and 21 subtexel-filtered taps for raised casters, and a single
+D-pad LEFT/RIGHT scene pager. No separate PCF, PCSS or Kawase
+sample ELFs are generated. Previous legacy sample ELF artifacts
+may still be present on disk after pulling; do not mistake those
+for new builds.
+
+After the eight visual scenes, there are four *scaled, adapted*
+Box3D broadphase/solver stress presets inspired by the upstream
+Benchmark/Large Pyramid and Wide Pyramid workloads:
+
+| Scene page | Dynamic boxes | Arrangement |
+| --- | ---: | --- |
+| BENCH 64 BOX | 64 | 8x8 grid, staggered drop heights |
+| BENCH 144 BOX | 144 | 12x12 grid, staggered drop heights |
+| BENCH 256 BOX | 256 | 16x16 grid, staggered drop heights |
+| BENCH 400 BOX | 400 | 20x20 grid, staggered drop heights |
+
+These are *not exact* ports of the original desktop C++ Benchmark
+classes; their benefit is an explicit scalable workload under the
+same real physics and GS PCSS renderer. On stress pages only, tiny
+GS outline strokes are omitted to stay within the 15-bit GIF NLOOP
+packet maximum; opaque triangles and physics are still processed.
+No extra ELF is needed for any stress level. The rasterizer never
+claims VU1 transforms have already been implemented.
+
+Telemetry printed every 60 frames:
+`BOX3D_PERF,scene=N,frame=...,bodies=...,physics_ms=...,
+build_ms=...,gpu_wait_ms=...,vsync_idle_ms=...,work_pct=...,
+gif_qwords=...`.
+The HUD CPU+GPU USE is the fraction of the **nominal 16.67ms / 60Hz
+EE Count budget spent doing work**, excluding deliberate VSync idle.
+Note that this is an approximate *combined elapsed* utilization and
+includes some CPU waiting for GS completion, not a hardware GPU
+percent meter. A PCSX2 display locked at 60fps does not prove that
+`work_pct` is small.
