@@ -804,8 +804,7 @@ static void render_receiver_shadows(int receiver)
 #if defined(BOX3D_GS_PCSS_SHADOWS)
     if(s_frame%240==0)
     {
-        int nonempty=0;
-        for(int r=1;r<=5;++r)nonempty+=bucketCasters[r]!=0;
+        int nonempty=b3Ps2ShadowGroupCount(bucketCasters);
         printf("BOX3D_PCSS_RECEIVER,scene=%d,receiver=%d,casters=%u,radius_min=%d,radius_max=%d,buckets=%d,composites=%d,major_axis=%c\n",
                s_scene.kind,receiver,projectedHulls,
                projectedHulls?minRadius:0,maxRadius,nonempty,nonempty,

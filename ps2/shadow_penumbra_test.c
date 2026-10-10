@@ -25,6 +25,14 @@ int main(void)
     }
     assert(total==98);
     assert(nonzero==21);
+    unsigned groups[6]={0,0,0,0,0,40};
+    assert(b3Ps2ShadowGroupCount(groups)==1); // former 40 composites
+    groups[1]=12;groups[2]=7;groups[4]=3;
+    assert(b3Ps2ShadowGroupCount(groups)==4);
+    groups[3]=1;
+    assert(b3Ps2ShadowGroupCount(groups)==5);
+    for(int r=1;r<=5;++r)groups[r]=0;
+    assert(b3Ps2ShadowGroupCount(groups)==0);
     assert(b3Ps2ShadowCompressMinor(5)==3);
     assert(b3Ps2ShadowCompressMinor(-5)==-3);
     assert(b3Ps2ShadowCompressMinor(3)==2);

@@ -35,6 +35,17 @@ static inline int b3Ps2ShadowCompressMinor(int offset)
     return (offset*2)/3;
 }
 
+// If 40 overlapping casters quantize to the same 5px radius, one
+// unioned coverage mask is enough. Thus only populated groups consume
+// a GS filter/composite pass, rather than N per-body darkening passes.
+static inline int b3Ps2ShadowGroupCount(const unsigned groupCasters[6])
+{
+    int count=0;
+    for(int r=1;r<=5;++r)
+        count+=(groupCasters[r]!=0);
+    return count;
+}
+
 static inline int b3Ps2ShadowOffset5(int index,int radius)
 {
     if(index==-2)return -radius;

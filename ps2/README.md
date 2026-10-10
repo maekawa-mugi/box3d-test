@@ -829,3 +829,71 @@ ELF variants or rendering features are needed to correct this.
 
 **The 480p software-renderer screenshot precedes this fix; the
 revised PS2DEV ELF and PCSX2 render still need tester confirmation.**
+
+## Shadow regression repair: PCSS bucket union + common GS filtered compositing
+
+A PCSX2 screenshot showed tall stacked casters with a hard shadow and
+detached circular dark orb, after prior wide Dual Kawase edits. This
+change simultaneously addresses three sources of regression:
+
+1. **Extended Dual Kawase:** the final `72 FIX` RAW-mask direct subtract
+   and four `FIX 6` wide taps are removed. The 40x28 / 80x60 pyramid
+   is retained. Instead a **bilinearly downsampled 1/2-resolution**
+   mask is composited before the pyramid buffers are reused, using
+   four tight passes at FIX=20 (80 of 96 units). The eighth-resolution
+   filtered result is composited at the end using four tight passes
+   at FIX=4 (16 units). Thus 80/96 near-filtered plus 16/96 far-filtered
+   coverage, with **no hard RAW silhouette directly added**.
+   Both sources are on disjoint GS VRAM pages. This does *not* implement
+   mathematical `blur(mask)-mask` subtraction; it is a practical
+   two-scale filtered approximation in fixed-function GS.
+
+2. **PCSS-inspired contact hardening:** 40 individual shadow composites
+   could darken the same pixel up to 40 times and create a black orb.
+   Casters are now binned by their existing 1..5 pixel radius.
+   Each radius bucket writes all its silhouettes to **one full-cleared
+   RGB coverage mask**, then filters and composites **once**.
+   The number of composite passes is bounded to at most 5, while
+   separate near/far groups preserve the distance-dependent softness.
+   The projected light tangent selects the major screen-space axis;
+   5x5 sampling offsets along the minor axis are scaled to 2/3,
+   making extended shadows less circular. This directionality is
+   an artistic PCSS-style approximation, not a depth-map blocker
+   search or physically exact area-light algorithm.
+
+3. **Shared GS compositor:** PCF, PCSS and Kawase now call common
+   `b3GsShadowCompositeSource`, `b3GsShadowCompositeTap`, and
+   `b3GsShadowCompositeFour` helpers: switch to the back color
+   framebuffer, TEXFLUSH and point TEX0/TEX1 at the disjoint coverage
+   source, then subtract coverage RGB with GS fixed-function ALPHA.
+   GS Z writes stay disabled throughout coverage passes and normal
+   opaque Z state is restored at the end. This prevents mode-local
+   code from diverging into incompatible blend semantics.
+
+PCS​​X2 diagnostic `BOX3D_PCSS_RECEIVER` now includes
+`buckets=N,composites=N,major_axis=X|Y`. For 40 identical caster
+radii, `composites` must be **1 rather than 40**. This is measured
+per receiver, per frame. The host portable
+`ps2/shadow_penumbra_test.c` checks the 98-unit 21-tap kernel,
+1..5px quantizer, signed direction offsets and 40-to-1 bucket
+aggregation.
+
+The existing filenames are unchanged:
+`box3d_ps2_samples_pcss.elf`,
+`box3d_ps2_samples_kawase_wide.elf`, and
+`box3d_ps2_samples_kawase_wide_progressive.elf`.
+Known 480p GS physical-page alignment from the prior fix is untouched.
+
+```sh
+git pull --ff-only origin experiment/ps2-ee-scalar
+sh ps2/build_ee.sh
+cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic \
+  ps2/shadow_penumbra_test.c -o /tmp/box3d_shadow_penumbra
+/tmp/box3d_shadow_penumbra
+```
+
+**The new variants are pushed but R5900 cross-compilation and PCSX2
+visual correctness are not yet confirmed in the assistant
+environment.** Confirm the previous black orb no longer builds up on
+Box Stack, and the Books scene still shows increasing penumbra with
+height. Compare extended Kawase against the stable 3x3 PCF reference.
