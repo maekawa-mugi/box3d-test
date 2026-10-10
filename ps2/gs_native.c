@@ -517,12 +517,13 @@ void b3GsShadowEnd(void)
 
     // Back to main scene. GS RGB subtract blend:
     // (ZERO - SRC_RGB)*(FIX/128) + DEST_RGB.
-    // Four shifted textured sprites with FIX=16 produce at most ~64
-    // gray levels of soft shadow. The blurred RGB mask, not alpha,
-    // controls opacity; no pixel shader or software blur is needed.
+    // Four shifted textured sprites with FIX=28 yield up to 112
+    // gray levels of shadow at 128-level coverage. Previous FIX=16
+    // yielded only 64, so a sparse RAW mask disappeared after filtering.
+    // RGB coverage rather than alpha controls blend opacity.
     b3GsKawaseTarget(s_framebuffer[s_back],B3_PS2_GS_W,B3_PS2_GS_H);
     b3GsKawaseSource(s_halfMask[0],B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,8,7);
-    b3GsAD(GS_SET_ALPHA(2,0,2,1,16),GS_REG_ALPHA_1);
+    b3GsAD(GS_SET_ALPHA(2,0,2,1,28),GS_REG_ALPHA_1);
     b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
                    B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,-2,-2);
     b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,

@@ -290,3 +290,48 @@ Recommended test order after `sh ps2/build_ee.sh`:
 These editions remain unverified on the user's R5900/PCSX2 after these
 fixes. Do not claim the geometry or blur bug is fixed until the tester
 shows the new screen and, ideally, the `BOX3D_SHADOW_RECEIVERS` CSV.
+
+## PCSX2 shadow mask failure recovery: receiver-layered pipeline
+
+Tester screenshot still showed fragmented receiver silhouettes with the
+GS depth-driven approach, and RAW/QUARTER/FINAL masks mostly black in
+the Kawase debug edition. The earlier "inverse Z" adjustment was not
+sufficient: the real-world multi-receiver depth approach and render
+order were still rejecting shadow coverage.
+
+The new pipeline is **receiver-layered**:
+
+- Draw the *opaque floor*.
+- Generate and composite its full clipped projected shadow mask without
+  GS depth testing (shadows can only exist inside its finite receiver).
+- Draw the *opaque inclined slab*, if present. It naturally occludes
+  shadows that belong behind its surface.
+- Generate and composite its own clipped shadows, also without the
+  problematic Z-test.
+- Draw the *dynamic bodies last*, restoring their full opaque Z-tested
+  depth and silhouettes over the shadows.
+
+Both hard shadows and full VRAM soft-shadow passes now use this order.
+Every `b3GsShadowEnd` restores `TEST_1` to GEQUAL for the next
+opaque geometry. The soft path still performs full/half/quarter/half
+GS TEX0 bilinear ping-pong; final fixed-function RGB subtraction is
+strengthened from FIX=16 to FIX=28 so a complete silhouette remains
+visible through the soft kernel. No CPU convolution, gsKit, shaders or
+Sokol is involved.
+
+This should produce **complete RAW masks** without depending on subtle
+Z comparisons between independently tessellated GS primitives.
+It is not a physically perfect transparency-aware shadow mapping
+technique: moving body self-shadowing is intentionally not attempted
+in this receiver-ordered rendering pass. True self-shadowing remains
+a separate VU1 volume/depth-texture project.
+
+Testing:
+```sh
+git pull --ff-only origin experiment/ps2-ee-scalar
+sh ps2/build_ee.sh
+# Compare shadows.elf, softdebug.elf (RAW/QUARTER/FINAL), softshadows.elf.
+```
+**PCSX2 validation after this renderer rewrite is pending.** The
+previous dark masks and fragmented projected shadows are confirmed
+regressions, not a successful soft-shadow demo.
