@@ -29,6 +29,13 @@ void b3GsTriangle3(b3GsCamera camera, b3GsPoint3 a, b3GsPoint3 b,
 void b3GsSkyGradient(void);
 void b3GsShadowBegin(void);
 void b3GsShadowEnd(void);
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+// Set before EACH caster b3GsShadowBegin(): radius 1..5px, projected
+// screen bounds of that caster. Applies to both mask clear and composite.
+void b3GsShadowSetPenumbra(int radius,int x0,int y0,int x1,int y1);
+int b3GsProjectScreen(b3GsCamera camera,b3GsPoint3 point,
+                      int* x,int* y);
+#endif
 #if defined(BOX3D_GS_KAWASE_DEBUG)
 void b3GsKawaseDebugOverlay(void);
 #endif

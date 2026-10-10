@@ -2,6 +2,9 @@
 // PS2 native GS wireframe backend using packed GIF A+D and channel-2 DMA.
 // PS2SDK graph manages the CRT/read circuit only. No draw, no gsKit.
 #include "gs_native.h"
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+#include "shadow_penumbra.h"
+#endif
 #include <dma.h>
 #include <gif_tags.h>
 #include <graph.h>
@@ -41,6 +44,13 @@ static int s_shadowPass;
 static int s_shadowMask;
 static int s_halfMask[2];
 static int s_quarterMask[2];
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+static int s_pcssRadius=1;
+// Screen-space scissor bounds of this *one* caster shadow, including
+// kernel radius. Avoid drawing 9/21 full-screen textured quads 40 times.
+static int s_pcssX0=0,s_pcssY0=0;
+static int s_pcssX1=B3_PS2_GS_W-1,s_pcssY1=B3_PS2_GS_H-1;
+#endif
 #endif
 
 // Coordinates are signed screen pixels. We use XYOFFSET=2048.0 pixels
@@ -269,6 +279,13 @@ static int projectDepth(b3GsCamera c,b3GsPoint3 v,int* ox,int* oy,
 #endif
     return 1;
 }
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+int b3GsProjectScreen(b3GsCamera c,b3GsPoint3 p,int* x,int* y)
+{
+    uint32_t unusedDepth;
+    return projectDepth(c,p,x,y,&unusedDepth);
+}
+#endif
 #if !defined(BOX3D_GS_SOLID)
 static int project(b3GsCamera c,b3GsPoint3 v,int* ox,int* oy)
 {
@@ -485,6 +502,32 @@ static void b3GsKawasePass(int target,int targetW,int targetH,
     b3GsKawaseBlit(targetW,targetH,sourceW,sourceH,-radius, radius);
     b3GsKawaseBlit(targetW,targetH,sourceW,sourceH, radius, radius);
 }
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+void b3GsShadowSetPenumbra(int radius,int x0,int y0,int x1,int y1)
+{
+    if(radius<1)radius=1;
+    if(radius>5)radius=5;
+    s_pcssRadius=radius;
+    // Pad the projected silhouette by the furthest filter tap and
+    // rasterization rounding. Clip both mask CLEAR and final blending.
+    int pad=radius+3;
+    x0-=pad;y0-=pad;x1+=pad;y1+=pad;
+    if(x0<0)x0=0;
+    if(y0<0)y0=0;
+    if(x1>=B3_PS2_GS_W)x1=B3_PS2_GS_W-1;
+    if(y1>=B3_PS2_GS_H)y1=B3_PS2_GS_H-1;
+    // Silhouette fully out of view: scissor to one pixel and let
+    // projection/clipping skip triangles naturally.
+    if(x0>x1 || y0>y1){x0=x1=0;y0=y1=0;}
+    s_pcssX0=x0;s_pcssY0=y0;
+    s_pcssX1=x1;s_pcssY1=y1;
+}
+static void b3GsPcssScissor(void)
+{
+    b3GsAD(GS_SET_SCISSOR(s_pcssX0,s_pcssX1,
+                          s_pcssY0,s_pcssY1),GS_REG_SCISSOR_1);
+}
+#endif
 void b3GsShadowBegin(void)
 {
     s_shadowPass=1;
@@ -493,6 +536,9 @@ void b3GsShadowBegin(void)
     // are thus cropped by the real foreground surface, not just a 2D mask.
     b3GsAD(GS_SET_ZBUF(s_zbuffer>>11,GS_ZBUF_32,1),GS_REG_ZBUF_1);
     b3GsKawaseTarget(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H);
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+    b3GsPcssScissor();
+#endif
     b3GsKawaseClear(B3_PS2_GS_W,B3_PS2_GS_H);
     // The receiver polygon is geometrically clipped. Do not Z-discard
     // it against checker-floor triangles with different tessellation.
@@ -501,7 +547,46 @@ void b3GsShadowBegin(void)
 void b3GsShadowEnd(void)
 {
     s_shadowPass=0;
-#if defined(BOX3D_GS_PCF_SHADOWS)
+#if defined(BOX3D_GS_PCSS_SHADOWS)
+    // Each Box3D caster gets its own clipped mask. Use per-caster
+    // receiver separation to choose a compact screen-space penumbra.
+    // Nearby geometry keeps the proven 3x3 / 96 FIX pattern; distant
+    // geometry uses a 5x5 binomial / ~98 FIX pattern (21 nonzero taps).
+    // The GS texture is FULL resolution and bilinear. No shadow-map
+    // depth comparisons or CPU pixel convolution occur in this path.
+    b3GsKawaseTarget(s_framebuffer[s_back],B3_PS2_GS_W,B3_PS2_GS_H);
+    b3GsPcssScissor();
+    b3GsKawaseSource(s_shadowMask,B3_PS2_GS_W,B3_PS2_GS_H,9,8);
+    if(s_pcssRadius==1)
+    {
+        for(int iy=-1;iy<=1;++iy)
+        for(int ix=-1;ix<=1;++ix)
+        {
+            int fix=(ix==0&&iy==0)?24:
+                    ((ix==0||iy==0)?12:6);
+            b3GsAD(GS_SET_ALPHA(2,0,2,1,fix),GS_REG_ALPHA_1);
+            b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
+                           B3_PS2_GS_W,B3_PS2_GS_H,ix,iy);
+        }
+    }
+    else
+    {
+        for(int iy=-2;iy<=2;++iy)
+        for(int ix=-2;ix<=2;++ix)
+        {
+            int fix=b3Ps2ShadowWeight5(ix,iy);
+            if(fix==0)continue;
+            int dx=b3Ps2ShadowOffset5(ix,s_pcssRadius);
+            int dy=b3Ps2ShadowOffset5(iy,s_pcssRadius);
+            b3GsAD(GS_SET_ALPHA(2,0,2,1,fix),GS_REG_ALPHA_1);
+            b3GsKawaseBlit(B3_PS2_GS_W,B3_PS2_GS_H,
+                           B3_PS2_GS_W,B3_PS2_GS_H,dx,dy);
+        }
+    }
+    // Next receiver, another caster, and the HUD all need full scissor.
+    b3GsAD(GS_SET_SCISSOR(0,B3_PS2_GS_W-1,0,B3_PS2_GS_H-1),
+           GS_REG_SCISSOR_1);
+#elif defined(BOX3D_GS_PCF_SHADOWS)
     // PCF-like visibility filtering on a pre-rasterized shadow mask.
     // This is NOT depth-map PCF: the geometry/receiver has already
     // resolved occlusion into RGB coverage. Sample that coverage using
