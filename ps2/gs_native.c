@@ -14,7 +14,11 @@
 #include <stdio.h>
 
 typedef struct B3GsQword { uint64_t data, reg; } B3GsQword;
-#if defined(BOX3D_GS_OFFICIAL)
+#if defined(BOX3D_GS_RECEIVER_SHADOWS)
+// The full 40-box official stack plus clipped multi-receiver silhouettes
+// can exceed the old 8192-qword packet. Keep the entire frame visible.
+#define B3_GS_QWORDS 16384
+#elif defined(BOX3D_GS_OFFICIAL)
 #define B3_GS_QWORDS 8192
 #else
 #define B3_GS_QWORDS 2048
