@@ -105,7 +105,14 @@ void b3Ps2VU0NormalSolve( b3Ps2VU0NormalSolveData* data );
 // native PS2 ELF. The physics library references them in mode 6 only.
 int b3Vu0MicroIsReady( void );
 unsigned b3Vu0MicroGetLiveCalls( void );
+// Graph-colored contacts have no shared dynamic bodies within a color.
+// Each SIMD4 record is four independent normal impulse lanes.
+enum { B3_PS2_VU0_BATCH_GROUPS = 16 };
 int b3Vu0MicroNormalSolve4( b3Ps2VU0NormalSolveData* data );
+// Returns 1: VU0 outputs valid, 0: per-step batch budget exceeded,
+// -1: hardware or numeric failure (caller must fall back to EE).
+int b3Vu0MicroNormalSolveBatch( b3Ps2VU0NormalSolveData* records, unsigned groups );
+unsigned b3Vu0MicroGetLiveGroups( void );
 unsigned b3Ps2GetVU0NormalSolveCount( void );
 
 // Compute-only saturation probe: 8 independent VF accumulators, each with

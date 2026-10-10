@@ -69,7 +69,8 @@ static inline void b3Vu0MicroReference(b3Vu0MicroBlock* block)
 // input edge into thousands of synchronous VCALLMS/MMIO round-trips.
 // Remaining contacts use the original EE scalar reference. The complete
 // 64-lane differential always runs without this live-call budget.
-enum { B3_VU0_MICRO_MAX_LIVE_PER_STEP=32 };
+enum { B3_VU0_MICRO_MAX_LIVE_PER_STEP=32,
+       B3_VU0_MICRO_MAX_BATCHES_PER_STEP=128 };
 
 // Reset the live-call allowance once before each world step. This
 // does not upload code, launch microcode, or add controller stages.

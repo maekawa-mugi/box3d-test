@@ -1139,3 +1139,36 @@ This is a conservative rendering recovery path, **not** proof of
 a GIF synchronization root cause or 60 FPS. PCSX2 validation is
 still required to distinguish startup DIFF failure from a
 live contact failure and to verify the boxes remain visible.
+
+## VU0 real graph-color batch integration
+
+TRIANGLE mode 6 now invokes the micro normal solver with up to
+**16 independent SIMD4 contact groups (64 lanes) per VCALLMS** for
+wide convex contact blocks of at least two groups. Each graph color
+has disjoint dynamic-body constraints, so a batch does not mix
+dependent bodies or different colors. Within each constraint the
+normal contact points are still solved and applied in sequence;
+rolling/twist/central friction run later on the EE using the
+updated body velocities. Overflow/mesh contacts and small blocks
+retain the existing single-record path.
+
+The batch copies up to 209 QWs into VU0 DMEM and checks all output
+values for finiteness, with periodic scalar comparison of real
+contacts. It never commits partial data: any VU0 fault recomputes
+the entire pending batch on EE and disables further VU0 execution.
+Normal per-step budget exhaustion also falls back to EE but retains
+the user-selected mode. The batch budget is 128 VCALLMS per world
+step, independent of the existing 32-call single-record budget.
+
+`BOX3D_PERF` includes `vu0_micro_groups` alongside
+`vu0_micro_calls`; successful 16-group batching should increase
+groups faster than calls. This changes the workload genuinely
+offloaded to VU0 rather than only enabling micro mode for a few
+individual constraints. VU1/PATH1/PATH3 synchronization and the
+TRIANGLE control remain unchanged.
+
+**Unverified:** PS2 toolchain build, PCSX2 numeric equivalence and
+long-running stability, 400-awake throughput, and shadowed 60 FPS.
+A shadowed 60 FPS frame still requires total physics + draw + GS
+wait below 16.67 ms, including optimization beyond the normal
+impulse kernel.

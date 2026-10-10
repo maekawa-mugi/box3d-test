@@ -1205,6 +1205,150 @@ B3_FORCE_INLINE void b3PushContactsW( b3SolverBlock block, b3StepContext* contex
 	}
 }
 
+#if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
+// A graph color contains disjoint dynamic-body constraints. Batch
+// only within a single solver block/color and only for single-manifold
+// convex contacts. Each contact point is committed before its next
+// point is prepared, preserving the normal Gauss-Seidel dependency.
+// Friction stays on EE and runs after all normal points for that color.
+typedef struct b3Ps2BatchNormalSlot
+{
+    b3ContactConstraintWide* c;
+    b3ContactManifoldWide* cm;
+    b3ContactConstraintPointWide* cp;
+    b3BodyStateW bA,bB;
+    b3Vec3W rA,rB;
+    int groupIndex;
+} b3Ps2BatchNormalSlot;
+
+B3_FORCE_INLINE void b3SolveBatchedNormalsW4( b3SolverBlock block, b3StepContext* context, void* base )
+{
+    b3BodyState* states = context->states;
+    const b3FloatW zeroW = b3ZeroW();
+    const b3FloatW inv_h = b3SplatW( context->inv_h );
+
+    // Native PS2 has one EE physics worker. Keep the ~10 KB scratch
+    // in BSS instead of the small EE stack.
+    static struct
+    {
+        b3ContactConstraintWide* constraint[B3_PS2_VU0_BATCH_GROUPS];
+        b3ContactManifoldWide* manifold[B3_PS2_VU0_BATCH_GROUPS];
+        b3FloatW totalNormal[B3_PS2_VU0_BATCH_GROUPS];
+        b3FloatW totalTwist[B3_PS2_VU0_BATCH_GROUPS];
+        b3Ps2BatchNormalSlot slots[B3_PS2_VU0_BATCH_GROUPS];
+        b3Ps2VU0NormalSolveData inputs[B3_PS2_VU0_BATCH_GROUPS];
+    } scratch;
+
+    for ( int first = 0; first < block.count; first += B3_PS2_VU0_BATCH_GROUPS )
+    {
+        int count = block.count - first;
+        if ( count > B3_PS2_VU0_BATCH_GROUPS ) count = B3_PS2_VU0_BATCH_GROUPS;
+        b3ContactConstraintWide* c = b3GetConstraintW( base, NULL, block.startIndex + first, 1 );
+        int maxPoints = 0;
+        for ( int g = 0; g < count; ++g )
+        {
+            scratch.constraint[g] = c;
+            scratch.manifold[g] = b3GetManifoldsW( c );
+            scratch.totalNormal[g] = zeroW;
+            scratch.totalTwist[g] = zeroW;
+            if ( scratch.manifold[g]->pointCount > maxPoints )
+                maxPoints = scratch.manifold[g]->pointCount;
+            c = b3NextConstraintW( c, 1 );
+        }
+        for ( int point = 0; point < maxPoints; ++point )
+        {
+            unsigned active = 0;
+            for ( int g = 0; g < count; ++g )
+            {
+                b3ContactConstraintWide* current = scratch.constraint[g];
+                b3ContactManifoldWide* cm = scratch.manifold[g];
+                if ( point >= cm->pointCount ) continue;
+
+                b3Ps2BatchNormalSlot* slot = scratch.slots + active;
+                slot->c = current;
+                slot->cm = cm;
+                slot->cp = cm->points + point;
+                slot->groupIndex = g;
+                slot->bA = b3GatherBodies( states, current->indexA );
+                slot->bB = b3GatherBodies( states, current->indexB );
+                slot->rA = slot->cp->anchorAs;
+                slot->rB = slot->cp->anchorBs;
+
+                b3Vec3W dp = b3SubVW( slot->bB.dp, slot->bA.dp );
+                b3FloatW separation = b3DotW( cm->normal, dp );
+                b3Vec3W normalA = b3InvRotateVectorW( slot->bA.dq, cm->normal );
+                b3Vec3W normalB = b3InvRotateVectorW( slot->bB.dq, cm->normal );
+                b3FloatW dotB, dotA;
+                b3Dot2W( normalB, slot->rB, normalA, slot->rA, &dotB, &dotA );
+                b3FloatW s = b3AddW( b3AddW( separation, b3SubW( dotB, dotA ) ),
+                                      slot->cp->baseSeparations );
+                b3FloatW bias = b3MaxW( zeroW, b3MulW( s, inv_h ) );
+                b3Vec3W vrA = b3AddVW( slot->bA.v, b3CrossW( slot->bA.w, slot->rA ) );
+                b3Vec3W vrB = b3AddVW( slot->bB.v, b3CrossW( slot->bB.w, slot->rB ) );
+                b3FloatW vn = b3DotW( b3SubVW( vrB, vrA ), cm->normal );
+
+                b3Ps2VU0NormalSolveData* input = scratch.inputs + active;
+                b3StoreW4( input->oldImpulse, slot->cp->normalImpulses );
+                b3StoreW4( input->normalMass, slot->cp->normalMasses );
+                b3StoreW4( input->normalSpeed, vn );
+                b3StoreW4( input->velocityBias, bias );
+                b3StoreW4( input->oldPointTotal, slot->cp->totalNormalImpulses );
+                b3StoreW4( input->oldManifoldTotal, scratch.totalNormal[g] );
+                b3StoreW4( input->oldTwistLimit, scratch.totalTwist[g] );
+                b3StoreW4( input->leverArm, slot->cp->leverArms );
+                ++active;
+            }
+            if ( active == 0 ) continue;
+            int result = b3Vu0MicroNormalSolveBatch( scratch.inputs, active );
+            if ( result < 0 ) b3Ps2SetVU0Enabled( 0 );
+
+            if ( result != 1 )
+            {
+                // The entire batch must be valid before applying ANY
+                // impulses. On failure, recompute all active groups on
+                // EE; after a hardware error subsequent calls stay EE.
+                for ( unsigned k = 0; k < active; ++k )
+                {
+                    b3Ps2VU0NormalSolveData* s = scratch.inputs + k;
+                    for ( int lane = 0; lane < 4; ++lane )
+                    {
+                        float old = s->oldImpulse[lane];
+                        float next = old - s->normalMass[lane] *
+                            ( s->normalSpeed[lane] + s->velocityBias[lane] );
+                        if ( next < 0.0f ) next = 0.0f;
+                        s->newImpulse[lane] = next;
+                        s->deltaImpulse[lane] = next - old;
+                        s->newPointTotal[lane] = s->oldPointTotal[lane] + next;
+                        s->newManifoldTotal[lane] = s->oldManifoldTotal[lane] + next;
+                        s->newTwistLimit[lane] = s->oldTwistLimit[lane] + s->leverArm[lane] * next;
+                    }
+                }
+            }
+
+            for ( unsigned k = 0; k < active; ++k )
+            {
+                b3Ps2BatchNormalSlot* slot = scratch.slots + k;
+                b3Ps2VU0NormalSolveData* input = scratch.inputs + k;
+                b3FloatW impulse = b3LoadW4( input->newImpulse );
+                b3FloatW delta = b3LoadW4( input->deltaImpulse );
+                slot->cp->normalImpulses = impulse;
+                slot->cp->totalNormalImpulses = b3LoadW4( input->newPointTotal );
+                scratch.totalNormal[slot->groupIndex] = b3LoadW4( input->newManifoldTotal );
+                scratch.totalTwist[slot->groupIndex] = b3LoadW4( input->newTwistLimit );
+
+                b3Vec3W P = b3MulSVW( delta, slot->cm->normal );
+                slot->bA.w = b3MulSubMVW( slot->bA.w, slot->c->invIA, b3CrossW( slot->rA, P ) );
+                slot->bA.v = b3MulSubSVW( slot->bA.v, slot->c->invMassA, P );
+                slot->bB.w = b3MulAddMVW( slot->bB.w, slot->c->invIB, b3CrossW( slot->rB, P ) );
+                slot->bB.v = b3MulAddSVW( slot->bB.v, slot->c->invMassB, P );
+                b3ScatterBodies( states, slot->c->indexA, &slot->bA );
+                b3ScatterBodies( states, slot->c->indexB, &slot->bB );
+            }
+        }
+    }
+}
+#endif
+
 // Solve the normal constraint, friction, and rolling resistance.
 B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* context, void* base, const int* manifoldStarts,
 									   int fixedManifoldCount )
@@ -1215,6 +1359,13 @@ B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* conte
 	b3FloatW zeroW = b3ZeroW();
 	b3FloatW epsilonW = b3SplatW( FLT_EPSILON );
 
+#if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
+    // The color guarantees independent bodies; no batching across
+    // graph colors or across points that depend on previous impulses.
+    const bool useBatchedNormals = fixedManifoldCount == 1 && block.count >= 2 &&
+        b3Ps2GetVU0Enabled() == 6 && b3Vu0MicroIsReady();
+    if ( useBatchedNormals ) b3SolveBatchedNormalsW4( block, context, base );
+#endif
 	b3ContactConstraintWide* c = b3GetConstraintW( base, manifoldStarts, block.startIndex, fixedManifoldCount );
 	for ( int i = 0; i < block.count; ++i )
 	{
@@ -1238,7 +1389,24 @@ B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* conte
 			b3FloatW totalNormalImpulse = zeroW;
 			b3FloatW totalTwistLimit = zeroW;
 
-			// Normal contraints
+#if defined( BOX3D_PS2 ) && B3_SIMD_WIDTH == 4
+            if ( useBatchedNormals )
+            {
+                // Normal impulses and velocities were already committed
+                // in the graph-colored batch. Reconstruct the manifold
+                // totals before rolling, twist and central friction.
+                for ( int pointIndex = 0; pointIndex < cm->pointCount; ++pointIndex )
+                {
+                    b3ContactConstraintPointWide* cp = cm->points + pointIndex;
+                    totalNormalImpulse = b3AddW( totalNormalImpulse, cp->normalImpulses );
+                    totalTwistLimit = b3AddW( totalTwistLimit,
+                        b3MulW( cp->leverArms, cp->normalImpulses ) );
+                }
+            }
+            else
+#endif
+            {
+			// Normal constraints (EE/legacy single-record path).
 			for ( int pointIndex = 0; pointIndex < cm->pointCount; ++pointIndex )
 			{
 				b3ContactConstraintPointWide* cp = cm->points + pointIndex;
@@ -1322,6 +1490,7 @@ B3_FORCE_INLINE void b3SolveContactsW( b3SolverBlock block, b3StepContext* conte
 				bB.w = b3MulAddMVW( bB.w, c->invIB, b3CrossW( rB, P ) );
 				bB.v = b3MulAddSVW( bB.v, c->invMassB, P );
 			}
+            }
 
 			// Rolling resistance. After normal constraints because it uses the normal impulse.
 			if ( anyRolling )

@@ -32,6 +32,8 @@ int main(void)
     assert(!b3Ps2VU0MacroModeMatches(6,3));
     assert(!b3Ps2VU0MacroModeMatches(6,4));
     assert(B3_VU0_MICRO_MAX_LIVE_PER_STEP>0);
+    assert(B3_PS2_VU0_BATCH_GROUPS==B3_VU0_MICRO_GROUPS);
+    assert(B3_VU0_MICRO_MAX_BATCHES_PER_STEP>=B3_VU0_MICRO_MAX_LIVE_PER_STEP);
     b3Vu0MicroBlock block={0};
     assert(((uintptr_t)&block&15u)==0u);
     for(unsigned seed=0;seed<64u;++seed)

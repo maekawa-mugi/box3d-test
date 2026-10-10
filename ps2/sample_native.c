@@ -1748,7 +1748,7 @@ int main(void)
             if(s_perfSamples>=60)
             {
                 double divisor=294912.0*(double)s_perfSamples;
-                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_shadow_ms=%.3f,avg_box_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u,substeps=%d,vu0=%d,shadow_mode=%d,vu1_enabled=%d,vu1_boxes=%d,sleep=%d,awake=%d,vu0_micro_calls=%u\n",
+                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,avg_physics_ms=%.3f,avg_build_ms=%.3f,avg_shadow_ms=%.3f,avg_box_ms=%.3f,avg_gpu_wait_ms=%.3f,peak_work_ms=%.3f,avg_work_pct=%.1f,vsync_idle_ms=%.3f,gif_qwords=%u,substeps=%d,vu0=%d,shadow_mode=%d,vu1_enabled=%d,vu1_boxes=%d,sleep=%d,awake=%d,vu0_micro_calls=%u,vu0_micro_groups=%u\n",
                        s_scene.kind,(unsigned long)s_frame,s_scene.count-1,
                        (double)s_sumPhysicsTicks/divisor,
                        (double)s_sumBuildTicks/divisor,
@@ -1764,7 +1764,7 @@ int main(void)
                         s_vu1Ready&&s_vu1Budget>0,s_lastVu1Boxes,
                        b3World_IsSleepingEnabled(s_scene.world),
                        b3World_GetAwakeBodyCount(s_scene.world),
-                       b3Vu0MicroGetLiveCalls());
+                       b3Vu0MicroGetLiveCalls(),b3Vu0MicroGetLiveGroups());
                 b3Counters counters=b3World_GetCounters(s_scene.world);
                 printf("BOX3D_PHYS_PROFILE,scene=%d,frame=%lu,substeps=%d,vu0=%d,pairs_ms=%.3f,collide_ms=%.3f,solve_ms=%.3f,constraints_ms=%.3f,contacts=%d,awake=%d\n",
                        s_scene.kind,(unsigned long)s_frame,

@@ -26,10 +26,18 @@ static const char* s_status="VU0 MICRO NOT INIT";
 static _Alignas(64) b3Vu0MicroBlock s_microData;
 static unsigned s_liveCalls;
 static unsigned s_stepCalls;
+static unsigned s_batchCalls;
+static unsigned s_liveGroups;
 
-void b3Vu0MicroBeginPhysicsStep(void){s_stepCalls=0;}
+void b3Vu0MicroBeginPhysicsStep(void)
+{
+    s_stepCalls=0;
+    s_batchCalls=0;
+}
 _Static_assert(sizeof(b3Ps2VU0NormalSolveData)==sizeof(b3Vu0MicroRecord),
                "Box3D SIMD4 normal impulse ABI must match VU0 micro record");
+_Static_assert(B3_PS2_VU0_BATCH_GROUPS==B3_VU0_MICRO_GROUPS,
+               "Solver batch must fit the VU0 256-QW data memory");
 
 static int b3Vu0WaitIdle(void)
 {
@@ -140,6 +148,7 @@ static int b3Vu0MicroRunBlock(b3Vu0MicroBlock* block,unsigned groups)
 
 int b3Vu0MicroIsReady(void){return s_verified;}
 unsigned b3Vu0MicroGetLiveCalls(void){return s_liveCalls;}
+unsigned b3Vu0MicroGetLiveGroups(void){return s_liveGroups;}
 
 // Each unbatched VCALLMS is a synchronous EE/VU0 round-trip. In large
 // awake scenes bound the number per physics step; use scalar thereafter
@@ -195,7 +204,70 @@ int b3Vu0MicroNormalSolve4(b3Ps2VU0NormalSolveData* record)
     }
     memcpy(record,&s_microData.record[0],sizeof(*record));
     ++s_liveCalls;
+    ++s_liveGroups;
     ++s_stepCalls;
+    return 1;
+}
+
+
+/* One VCALLMS processes 1..16 independent SIMD4 constraints in a
+ * verified 209-QW VU0 DMEM block. Both inputs and outputs are copied
+ * only for active groups. The original caller data is never modified
+ * until the entire output batch has passed numeric validation. */
+int b3Vu0MicroNormalSolveBatch(b3Ps2VU0NormalSolveData* records,
+                               unsigned groups)
+{
+    if(!records || !s_verified || groups==0u ||
+       groups>B3_VU0_MICRO_GROUPS)return -1;
+    if(s_batchCalls>=B3_VU0_MICRO_MAX_BATCHES_PER_STEP)return 0;
+    for(unsigned g=0;g<groups;++g)
+        memcpy(&s_microData.record[g],&records[g],sizeof(records[g]));
+    if(!b3Vu0MicroRunBlock(&s_microData,groups))return -1;
+
+    // Validate real non-binary contact values on the first 16 batches,
+    // then sample every 256th batch; always reject nonfinite results.
+    int compare=(s_liveCalls<16u || (s_liveCalls&255u)==0u);
+    for(unsigned g=0;g<groups;++g)
+    {
+        const b3Vu0MicroRecord* got=&s_microData.record[g];
+        const b3Ps2VU0NormalSolveData* input=&records[g];
+        for(unsigned lane=0;lane<4u;++lane)
+        {
+            const float old=input->oldImpulse[lane];
+            float next=old-input->normalMass[lane]*
+                (input->normalSpeed[lane]+input->velocityBias[lane]);
+            if(next<0.0f)next=0.0f;
+            const float expected[5]={
+                next,next-old,input->oldPointTotal[lane]+next,
+                input->oldManifoldTotal[lane]+next,
+                input->oldTwistLimit[lane]+input->leverArm[lane]*next
+            };
+            const float actual[5]={
+                got->newImpulse[lane],got->deltaImpulse[lane],
+                got->newPointTotal[lane],got->newManifoldTotal[lane],
+                got->newTwistLimit[lane]
+            };
+            for(unsigned k=0;k<5u;++k)
+            {
+                const float tolerance=0.002f*(1.0f+fabsf(expected[k]));
+                if(!isfinite(actual[k]) || !isfinite(expected[k]) ||
+                   (compare && fabsf(actual[k]-expected[k])>tolerance))
+                {
+                    printf("BOX3D_VU0_FAIL,batch_diff,group=%u,lane=%u,field=%u,expected=%f,got=%f\n",
+                           g,lane,k,(double)expected[k],(double)actual[k]);
+                    s_verified=0;
+                    s_status="VU0 FAIL BATCH DIFF";
+                    return -1;
+                }
+            }
+        }
+    }
+
+    for(unsigned g=0;g<groups;++g)
+        memcpy(&records[g],&s_microData.record[g],sizeof(records[g]));
+    ++s_liveCalls;
+    ++s_batchCalls;
+    s_liveGroups+=groups;
     return 1;
 }
 
@@ -329,6 +401,9 @@ int b3Vu0MicroDifferentialTest(void){return 0;}
 void b3Vu0MicroBeginPhysicsStep(void){}
 int b3Vu0MicroIsReady(void){return 0;}
 unsigned b3Vu0MicroGetLiveCalls(void){return 0;}
+unsigned b3Vu0MicroGetLiveGroups(void){return 0;}
 int b3Vu0MicroNormalSolve4(b3Ps2VU0NormalSolveData* data)
 {(void)data;return 0;}
+int b3Vu0MicroNormalSolveBatch(b3Ps2VU0NormalSolveData* records,unsigned groups)
+{(void)records;(void)groups;return -1;}
 #endif
