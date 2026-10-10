@@ -38,5 +38,7 @@ jobs:
             cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic "ps2/${name}_test.c" -lm -o "/tmp/b3_${name}_test"
             "/tmp/b3_${name}_test"
           done
+          cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic ps2/shadow_group_differential_test.c -o /tmp/b3_shadow_group_differential
+          /tmp/b3_shadow_group_differential
           cc -O2 -std=c17 -Wall -Wextra -Werror -pedantic ps2/shadow_project.c ps2/shadow_project_test.c -lm -o /tmp/b3_shadow_project_test
           /tmp/b3_shadow_project_test

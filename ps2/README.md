@@ -339,3 +339,15 @@ path. The projected-triangle helper also preserves constant RGB=128
 coverage when rendering into the shadow mask rather than a solid box.
 This remains an EE-side optimization; a real VU1/VIF transform pipeline
 is separate, and still unimplemented/unverified.
+
+## 2026-10-10: internal Box3D solver profiling
+
+Every 60 frames, `BOX3D_PHYS_PROFILE` reports averaged Box3D internal
+pairs/collide/solve/constraint timings along with live contact and awake
+body counts. `BOX3D_PERF` remains the EE CP0 wall-clock measure;
+the profile sub-stages can overlap or include nested work, and must not
+be summed as if they were independent. Use the profile to decide whether
+contact generation, solver iteration count, or shadow/geometry CPU time
+is the next major constraint. No automatic reduction of solver quality
+was made. CI now also runs a deterministic 250-case randomized union
+comparison against the original all-pairs reference.

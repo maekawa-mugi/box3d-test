@@ -159,6 +159,8 @@ static float s_lastWorkPct;
 static uint64_t s_sumPhysicsTicks,s_sumBuildTicks,s_sumGsTicks;
 static uint64_t s_sumShadowTicks,s_sumBoxTicks;
 static uint32_t s_frameShadowTicks,s_frameBoxTicks;
+static double s_profilePairsMs,s_profileCollideMs,s_profileSolveMs;
+static double s_profileConstraintsMs;
 static uint32_t s_maxWorkTicks;
 static int s_perfSamples;
 #endif
@@ -259,6 +261,10 @@ static void scene_create(int kind)
     s_sumGsTicks=0;
     s_sumShadowTicks=0;
     s_sumBoxTicks=0;
+    s_profilePairsMs=0.0;
+    s_profileCollideMs=0.0;
+    s_profileSolveMs=0.0;
+    s_profileConstraintsMs=0.0;
     s_maxWorkTicks=0;
     s_perfSamples=0;
 #endif
@@ -1441,6 +1447,11 @@ int main(void)
             s_sumGsTicks+=gpuTicks;
             s_sumShadowTicks+=s_frameShadowTicks;
             s_sumBoxTicks+=s_frameBoxTicks;
+            b3Profile profile=b3World_GetProfile(s_scene.world);
+            s_profilePairsMs+=profile.pairs;
+            s_profileCollideMs+=profile.collide;
+            s_profileSolveMs+=profile.solve;
+            s_profileConstraintsMs+=profile.constraints;
             if(workTicks>s_maxWorkTicks)s_maxWorkTicks=workTicks;
             ++s_perfSamples;
             if(s_perfSamples>=60)
@@ -1459,6 +1470,20 @@ int main(void)
                          (4915200.0*(double)s_perfSamples/100.0),
                        (double)s_lastVsyncMs,b3GsGetLastGifQwords(),
                        s_simSubsteps,s_vu0Mode);
+                b3Counters counters=b3World_GetCounters(s_scene.world);
+                printf("BOX3D_PHYS_PROFILE,scene=%d,frame=%lu,substeps=%d,vu0=%d,pairs_ms=%.3f,collide_ms=%.3f,solve_ms=%.3f,constraints_ms=%.3f,contacts=%d,awake=%d\n",
+                       s_scene.kind,(unsigned long)s_frame,
+                       s_simSubsteps,s_vu0Mode,
+                       s_profilePairsMs/(double)s_perfSamples,
+                       s_profileCollideMs/(double)s_perfSamples,
+                       s_profileSolveMs/(double)s_perfSamples,
+                       s_profileConstraintsMs/(double)s_perfSamples,
+                       counters.contactCount,
+                       b3World_GetAwakeBodyCount(s_scene.world));
+                s_profilePairsMs=0.0;
+                s_profileCollideMs=0.0;
+                s_profileSolveMs=0.0;
+                s_profileConstraintsMs=0.0;
                 s_perfSamples=0;
                 s_sumPhysicsTicks=0;
                 s_sumBuildTicks=0;
