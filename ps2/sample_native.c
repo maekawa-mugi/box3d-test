@@ -103,8 +103,16 @@ static void scene_create(int kind)
         for(int i=0;i<12;++i)
         {
             float y=0.75f+1.25f*(float)i;
+#if defined(BOX3D_GS_OFFICIAL)
+            // Official debug adapter shades dynamic geometry using physically
+            // lit material colors, rather than the saturated rainbow palette.
+            add_box(1,pt(0,y,0),pt(0.5f,0.5f,0.5f),identity,noSpin,0.7f,
+                    (uint8_t)(173+5*(i%3)),(uint8_t)(188+3*(i%4)),
+                    (uint8_t)(203+3*(i%4)));
+#else
             add_box(1,pt(0,y,0),pt(0.5f,0.5f,0.5f),identity,noSpin,0.7f,
                     (uint8_t)(90+i*10),(uint8_t)(190-i*6),230);
+#endif
         }
         s_scene.camera=b3GsLookAt(pt(18,13,22),pt(0,6.5f,0),200);
         puts("BOX3D_SAMPLE_SCENE,Stacking/BoxStack,boxes=12");
@@ -115,12 +123,21 @@ static void scene_create(int kind)
         // independently friction-tuned dynamic cubes.
         add_box(0,pt(0,-1,0),pt(25,1,25),identity,noSpin,0.7f,65,95,112);
         b3Quat incline=b3MakeQuatFromAxisAngle((b3Vec3){1,0,0},0.60f);
+#if defined(BOX3D_GS_OFFICIAL)
+        add_box(0,pt(0,5,-1),pt(8,0.4f,5),incline,noSpin,1.0f,169,178,190);
+#else
         add_box(0,pt(0,5,-1),pt(8,0.4f,5),incline,noSpin,1.0f,116,156,190);
+#endif
         for(int i=0;i<5;++i)
         {
             add_box(1,pt(-5.0f+2.5f*i,11.3f,-4.0f),pt(0.5f,0.5f,0.5f),
                     identity,noSpin,0.04f*(float)((i+1)*(i+1)),
+#if defined(BOX3D_GS_OFFICIAL)
+                    (uint8_t)(190+8*i),(uint8_t)(175+2*i),
+                    (uint8_t)(148+4*i));
+#else
                     240,(uint8_t)(210-24*i),(uint8_t)(70+24*i));
+#endif
         }
         s_scene.camera=b3GsLookAt(pt(18,13,20),pt(0,4,0),195);
         puts("BOX3D_SAMPLE_SCENE,Shapes/InclinedPlane,boxes=5");
@@ -146,7 +163,11 @@ static void scene_create(int kind)
             b3CreateHullShape(id,&sd,&hull.base);
             SceneBody* out=&s_scene.objects[s_scene.count++];
             out->id=id;out->half=pt(0.35f,0.08f,0.5f);
+#if defined(BOX3D_GS_OFFICIAL)
+            out->r=184;out->g=(uint8_t)(185+8*i);out->b=212;
+#else
             out->r=240;out->g=(uint8_t)(130+40*i);out->b=90;
+#endif
         }
         s_scene.camera=b3GsLookAt(pt(10,7,13),pt(0,2,0),215);
         puts("BOX3D_SAMPLE_SCENE,Bodies/SpinningBooks,books=3");
@@ -192,7 +213,13 @@ static void draw_box(const SceneBody* body)
             b3Vec3 n=b3RotateVector(q,faceNormals[face]);
             float diffuse=n.x*light.x+n.y*light.y+n.z*light.z;
             if(diffuse<0)diffuse=0;
+#if defined(BOX3D_GS_OFFICIAL)
+            // Matte daylight: ambient fill plus directional Lambert light.
+            // Original renderer adds PBR/IBL, this is GS flat shading.
+            float shade=0.44f+0.54f*diffuse;
+#else
             float shade=0.30f+0.67f*diffuse;
+#endif
             const uint8_t rr=(uint8_t)((float)body->r*shade);
             const uint8_t gg=(uint8_t)((float)body->g*shade);
             const uint8_t bb=(uint8_t)((float)body->b*shade);
@@ -206,14 +233,114 @@ static void draw_box(const SceneBody* body)
 #endif
     for(int j=0;j<12;++j)
     {
+#if defined(BOX3D_GS_OFFICIAL)
+        // Subtle bevel-like silhouettes, avoid saturated debug edges.
+        b3GsLine3(s_scene.camera,verts[endpoints[j][0]],verts[endpoints[j][1]],
+                  (uint8_t)((unsigned)body->r*66/100),
+                  (uint8_t)((unsigned)body->g*66/100),
+                  (uint8_t)((unsigned)body->b*66/100));
+#else
         b3GsLine3(s_scene.camera,verts[endpoints[j][0]],verts[endpoints[j][1]],
                   body->r,body->g,body->b);
+#endif
     }
 }
 
+
+// Official renderer approximation: soft chalk gray checker ground under the
+// same Box3D ground hull. Drawn as actual GS triangles with native Z test.
+#if defined(BOX3D_GS_OFFICIAL)
+static void render_ground(void)
+{
+    const float cell=4.0f;
+    const b3GsCamera camera=s_scene.camera;
+    // 12x12 tiles cover the central 48x48m range. No textures or gsKit.
+    for(int zi=-6;zi<6;++zi)
+    {
+        for(int xi=-6;xi<6;++xi)
+        {
+            float x=(float)xi*cell, z=(float)zi*cell;
+            int checker=(xi+zi)&1;
+            const uint8_t r=checker?177:183;
+            const uint8_t g=checker?181:187;
+            const uint8_t b=checker?182:188;
+            b3GsPoint3 a=pt(x,0,z),u=pt(x+cell,0,z);
+            b3GsPoint3 v=pt(x+cell,0,z+cell),w=pt(x,0,z+cell);
+            b3GsTriangle3(camera,a,u,v,r,g,b);
+            b3GsTriangle3(camera,a,v,w,r,g,b);
+        }
+    }
+    // Delicate procedural grid, like the desktop ground-box material.
+    // Slight Y bias prevents it from flickering with the filled surface.
+    for(int i=-24;i<=24;i+=4)
+    {
+        b3GsLine3(camera,pt((float)i,0.012f,-24),
+                  pt((float)i,0.012f,24),145,154,158);
+        b3GsLine3(camera,pt(-24,0.012f,(float)i),
+                  pt(24,0.012f,(float)i),145,154,158);
+    }
+}
+
+// Hard-edged directional planar proxy for the desktop cascade shadow
+// system. It follows the actual Box3D quaternion, with no extra collision
+// geometry or expensive shadow map. Only objects near enough to the floor
+// cast this first-pass shadow.
+static void render_shadows(void)
+{
+    const float sx=0.52f, sz=0.42f;
+    b3GsShadowBegin();
+    for(int i=1;i<s_scene.count;++i)
+    {
+        const SceneBody* body=&s_scene.objects[i];
+        b3Pos origin=b3Body_GetPosition(body->id);
+        if(origin.y>24.0f || origin.y < -5.0f) continue;
+        b3Quat q=b3Body_GetRotation(body->id);
+        const float h=fmaxf((float)origin.y,0.0f);
+        b3GsPoint3 xy[4];
+        for(int j=0;j<4;++j)
+        {
+            b3Vec3 local={
+                (j&1)?body->half.x:-body->half.x,
+                -body->half.y,
+                (j&2)?body->half.z:-body->half.z
+            };
+            b3Vec3 rotated=b3RotateVector(q,local);
+            // Move each projected corner away from the directional sun.
+            // The offset includes its actual world-space height.
+            float y=fmaxf((float)origin.y+rotated.y,0.0f);
+            xy[j]=pt((float)origin.x+rotated.x-sx*y,
+                     0.022f,
+                     (float)origin.z+rotated.z-sz*y);
+        }
+        b3GsTriangle3(s_scene.camera,xy[0],xy[1],xy[3],48,60,69);
+        b3GsTriangle3(s_scene.camera,xy[0],xy[3],xy[2],48,60,69);
+    }
+    b3GsShadowEnd();
+}
+
+static void render_official_hud(void)
+{
+    const char* sceneNames[]={"BOX STACK","INCLINED PLANE","SPINNING BOOKS"};
+    // A restrained top-left scene panel approximating ImGui sample
+    // information, but all glyph pixels are native GS sprites.
+    b3GsOverlayBegin();
+    b3GsOverlayPanel(7,7,152,37);
+    b3GsOverlayText(14,12,"BOX3D   PS2",239,245,247);
+    b3GsOverlayText(14,25,sceneNames[s_scene.kind],189,214,223);
+}
+#endif
 static void render(void)
 {
     b3GsBegin();
+#if defined(BOX3D_GS_OFFICIAL)
+    // Frame layers: atmosphere -> textured-look floor -> contact shadows
+    // -> lit rigid bodies -> scene panel. Native GS GIF A+D throughout.
+    b3GsSkyGradient();
+    render_ground();
+    render_shadows();
+    for(int i=1;i<s_scene.count;++i) draw_box(&s_scene.objects[i]);
+    render_official_hud();
+#else
     // Shared ground-plane axes and grid, useful as a motion reference.
     for(int i=-10;i<=10;i+=2)
     {
@@ -224,6 +351,7 @@ static void render(void)
     b3GsLine3(s_scene.camera,pt(0,0,-10),pt(0,0,10),81,117,207);
     b3GsLine3(s_scene.camera,pt(0,0,0),pt(0,4,0),79,203,123);
     for(int i=0;i<s_scene.count;++i) draw_box(&s_scene.objects[i]);
+#endif
     b3GsPresent();
 }
 
