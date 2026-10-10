@@ -114,6 +114,11 @@ static int pad_nav_poll(void)
 #endif
 #if defined(BOX3D_GS_PROGRESSIVE)
 static unsigned s_culledFaces, s_emittedFaces;
+#if defined(BOX3D_PS2_UNIFIED)
+static uint32_t s_beforeGsSubmitTicks;
+static float s_lastPhysicsMs,s_lastBuildMs,s_lastGpuMs,s_lastVsyncMs;
+static float s_lastWorkPct;
+#endif
 #endif
 
 static b3GsPoint3 pt(float x,float y,float z)
@@ -903,6 +908,15 @@ static void render_official_hud(void)
 #if defined(BOX3D_GS_PCSS_SHADOWS)
 #if defined(BOX3D_PS2_UNIFIED)
     b3GsOverlayText(28,112,"PCF FILTER  PCSS RADIUS",188,226,240);
+    // Display previous frame's measured utilization, NOT PCSX2 FPS
+    // capped to 60 by VSync. Includes physics, GS packet build and
+    // DMA/GS FINISH, excludes deliberate VSync idle time.
+    char meter[60];
+    snprintf(meter,sizeof(meter),"CPU %.1f  GPU %.1f  USE %.0f%%",
+             (double)(s_lastPhysicsMs+s_lastBuildMs),
+             (double)s_lastGpuMs,(double)s_lastWorkPct);
+    b3GsOverlayPanel(14,164,414,38);
+    b3GsOverlayText(26,176,meter,245,239,185);
 #else
     b3GsOverlayText(14,37,"GS PCSS HEIGHT",188,226,240);
     b3GsOverlayPanel(206,184,106,30);
@@ -1005,6 +1019,9 @@ static void render(void)
     b3GsLine3(s_scene.camera,pt(0,0,0),pt(0,4,0),79,203,123);
     for(int i=0;i<s_scene.count;++i) draw_box(&s_scene.objects[i]);
 #endif
+#if defined(BOX3D_PS2_UNIFIED)
+    s_beforeGsSubmitTicks=b3Ps2ReadCpuCycles();
+#endif
     b3GsPresent();
 }
 
@@ -1068,13 +1085,40 @@ int main(void)
         uint32_t physicsEnd=b3Ps2ReadCpuCycles();
 #endif
         render();
+#if defined(BOX3D_PS2_UNIFIED)
+        {
+            // Read the already-captured per-stage timings; no VSync
+            // ambiguity. A frame that reads "FPS 60" can still be
+            // using 90% of its CPU+GS budget.
+            uint32_t physicsTicks=
+                b3Ps2DeltaCpuCycles(frameStart,physicsEnd);
+            uint32_t buildTicks=
+                b3Ps2DeltaCpuCycles(physicsEnd,s_beforeGsSubmitTicks);
+            uint32_t gpuTicks=b3GsGetLastGsWaitTicks();
+            uint32_t vsyncTicks=b3GsGetLastVsyncWaitTicks();
+            const float ticksPerMs=294912.0f; // nominal EE 294.912MHz
+            s_lastPhysicsMs=(float)physicsTicks/ticksPerMs;
+            s_lastBuildMs=(float)buildTicks/ticksPerMs;
+            s_lastGpuMs=(float)gpuTicks/ticksPerMs;
+            s_lastVsyncMs=(float)vsyncTicks/ticksPerMs;
+            s_lastWorkPct=(float)(physicsTicks+buildTicks+gpuTicks)/
+                          (4915200.0f/100.0f);
+            if(s_frame%60==0)
+                printf("BOX3D_PERF,scene=%d,frame=%lu,bodies=%d,physics_ms=%.3f,build_ms=%.3f,gpu_wait_ms=%.3f,vsync_idle_ms=%.3f,work_pct=%.1f,gif_qwords=%u\n",
+                       s_scene.kind,(unsigned long)s_frame,
+                       s_scene.count-1,
+                       (double)s_lastPhysicsMs,(double)s_lastBuildMs,
+                       (double)s_lastGpuMs,(double)s_lastVsyncMs,
+                       (double)s_lastWorkPct,b3GsGetLastGifQwords());
+        }
+#endif
 #if defined(BOX3D_GS_PROGRESSIVE)
         if(s_frame%120==0)
             printf("BOX3D_GS_GEOMETRY,frame=%lu,culled_faces=%u,emitted_faces=%u,gif_qwords=%u,dma_submits=1\n",
                    (unsigned long)s_frame,s_culledFaces,s_emittedFaces,
                    b3GsGetLastGifQwords());
 #endif
-#if defined(BOX3D_GS_KAWASE_SHADOWS)
+#if defined(BOX3D_GS_KAWASE_SHADOWS) && !defined(BOX3D_PS2_UNIFIED)
         uint32_t frameEnd=b3Ps2ReadCpuCycles();
         if(s_frame%120==0)
         {
