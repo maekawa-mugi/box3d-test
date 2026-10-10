@@ -113,18 +113,36 @@ static void b3GsAD(uint64_t data, uint64_t reg)
     }
 }
 
+
+// GS framebuffer pages: PSMCT16/PSMZ16 = 64x64 pixels,
+// PSMCT32/PSMZ32 = 64x32 pixels. PS2SDK graph_vram_size()
+// pads width and word alignment but NOT height to whole GS pages.
+// 640x480 PSM16 must reserve 640x512 or it will overlap the
+// following surface. 320x240 PSM32 must reserve 320x256.
+static int b3GsPaddedSurfaceHeight(int height,int psm)
+{
+    int pageH=(psm==GS_PSM_16 || psm==GS_PSM_16S ||
+               psm==GS_PSMZ_16 || psm==GS_PSMZ_16S)?64:32;
+    return (height+pageH-1)&~(pageH-1);
+}
+static int b3GsAllocatePageSurface(int width,int height,int psm)
+{
+    return graph_vram_allocate(width,b3GsPaddedSurfaceHeight(height,psm),
+                               psm,GRAPH_ALIGN_PAGE);
+}
+
 int b3GsInit(void)
 {
     graph_vram_clear();
-    s_framebuffer[0] = graph_vram_allocate(B3_PS2_GS_W, B3_PS2_GS_H,
-                                           B3_GS_COLOR_PSM, GRAPH_ALIGN_PAGE);
-    s_framebuffer[1] = graph_vram_allocate(B3_PS2_GS_W, B3_PS2_GS_H,
-                                           B3_GS_COLOR_PSM, GRAPH_ALIGN_PAGE);
+    s_framebuffer[0] = b3GsAllocatePageSurface(B3_PS2_GS_W, B3_PS2_GS_H,
+                                           B3_GS_COLOR_PSM);
+    s_framebuffer[1] = b3GsAllocatePageSurface(B3_PS2_GS_W, B3_PS2_GS_H,
+                                           B3_GS_COLOR_PSM);
 #if defined(BOX3D_GS_SOLID)
     // PS2 GS ZBUF_32 is a distinct 8192-byte-page-aligned VRAM buffer.
     // The renderer still uses the two previously proven color buffers.
-    s_zbuffer = graph_vram_allocate(B3_PS2_GS_W, B3_PS2_GS_H,
-                                    B3_GS_DEPTH_PSM, GRAPH_ALIGN_PAGE);
+    s_zbuffer = b3GsAllocatePageSurface(B3_PS2_GS_W, B3_PS2_GS_H,
+                                    B3_GS_DEPTH_PSM);
     if(s_zbuffer < 0)
     {
         puts("BOX3D_GS_FAIL,zbuffer_allocation");
@@ -134,8 +152,8 @@ int b3GsInit(void)
 #if defined(BOX3D_GS_KAWASE_SHADOWS)
     // RGB mask/blur pages: no CPU round trips and no texture upload.
     // Scratch is disjoint from both color buffers and the depth buffer.
-    s_shadowMask=graph_vram_allocate(B3_PS2_GS_W,B3_PS2_GS_H,
-                                     GS_PSM_32,GRAPH_ALIGN_PAGE);
+    s_shadowMask=b3GsAllocatePageSurface(B3_PS2_GS_W,B3_PS2_GS_H,
+                                     GS_PSM_32);
 #if defined(BOX3D_GS_PCF_SHADOWS)
     // PCF samples only RAW full-resolution coverage. No extra half
     // or quarter pages are needed: reclaim ~175 KiB raw texel space
@@ -148,13 +166,13 @@ int b3GsInit(void)
 #else
     for(int i=0;i<2;++i)
     {
-        s_halfMask[i]=graph_vram_allocate(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
-                                         GS_PSM_32,GRAPH_ALIGN_PAGE);
-        s_quarterMask[i]=graph_vram_allocate(B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H,
-                                            GS_PSM_32,GRAPH_ALIGN_PAGE);
+        s_halfMask[i]=b3GsAllocatePageSurface(B3_KAWASE_HALF_W,B3_KAWASE_HALF_H,
+                                         GS_PSM_32);
+        s_quarterMask[i]=b3GsAllocatePageSurface(B3_KAWASE_QUARTER_W,B3_KAWASE_QUARTER_H,
+                                            GS_PSM_32);
 #if defined(BOX3D_GS_KAWASE_WIDE)
-        s_eighthMask[i]=graph_vram_allocate(B3_KAWASE_EIGHTH_W,B3_KAWASE_EIGHTH_H,
-                                            GS_PSM_32,GRAPH_ALIGN_PAGE);
+        s_eighthMask[i]=b3GsAllocatePageSurface(B3_KAWASE_EIGHTH_W,B3_KAWASE_EIGHTH_H,
+                                            GS_PSM_32);
 #endif
     }
     if(s_shadowMask<0 || s_halfMask[0]<0 || s_halfMask[1]<0 ||
@@ -168,6 +186,20 @@ int b3GsInit(void)
         return 0;
     }
 #endif
+#endif
+#if defined(BOX3D_GS_PROGRESSIVE) && defined(BOX3D_GS_KAWASE_WIDE)
+    // Report *actual* page-rounded end address, not a logical-pixel
+    // count. A valid 640x480 wide layout ends at 4,112,384 bytes.
+    if(s_eighthMask[1]>=0)
+    {
+        int endWords=s_eighthMask[1]+
+            graph_vram_size(B3_KAWASE_EIGHTH_W,
+                            b3GsPaddedSurfaceHeight(B3_KAWASE_EIGHTH_H,
+                                                    GS_PSM_32),
+                            GS_PSM_32,GRAPH_ALIGN_PAGE);
+        printf("BOX3D_GS_VRAM,mode=480p_wide,total_bytes=%d,limit_bytes=4194304,free_bytes=%d\n",
+               endWords*4,4194304-endWords*4);
+    }
 #endif
     if (s_framebuffer[0] < 0 || s_framebuffer[1] < 0)
     {
