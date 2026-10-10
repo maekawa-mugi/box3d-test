@@ -32,6 +32,7 @@ static _Alignas(64) uint32_t s_mpgStream[B3_VU1_CODE_WORDS];
 static _Alignas(64) uint32_t s_staticStream[160];
 static _Alignas(64) uint32_t s_cameraTestStream[36];
 static _Alignas(64) uint32_t s_bootTestStream[4];
+static _Alignas(64) uint32_t s_vuOnlyStream[104];
 static packet2_t* s_vifPacket;
 static _Alignas(64) b3Vu1BoxInput s_upload[B3_VU1_MAX_BOXES];
 static _Alignas(64) float s_camera[7][4];
@@ -403,6 +404,38 @@ int b3Vu1BoxesBootTest(void)
 int b3Vu1BoxesSubmit(void)
 {
     if(!s_ready || s_count==0)return 0;
+    // Isolate the first full VU transform from legacy packet2 chain
+    // assertions. In VUONLY there is exactly one box and XGKICK=0.
+    // Use the already verified normal-DMA VIF1 path instead.
+    if(!s_emitToGs && s_count==1)
+    {
+        const size_t words=b3Vu1BuildVuOnlyStream(
+            s_vuOnlyStream,104,s_camera,
+            s_upload[0].vertices,s_upload[0].colors,s_mainProgramPc);
+        if(words!=104u)
+        {
+            puts("BOX3D_VU1_FAIL,vuonly_stream_layout");
+            s_ready=0;
+            s_status="VU1 FAIL VU PACK";
+            return -1;
+        }
+        puts("BOX3D_VU1_PHASE,vuonly_normal_dma_begin");
+        if(dma_channel_send_normal(DMA_CHANNEL_VIF1,s_vuOnlyStream,
+                                   (int)(words/4u),0,0)<0 ||
+           dma_channel_wait(DMA_CHANNEL_VIF1,B3_VU1_DMA_WAIT_LIMIT)<0)
+        {
+            printf("BOX3D_VU1_FAIL,vuonly_normal_dma_timeout,vif_stat=%08x,vif_err=%08x\n",
+                   (unsigned)VIF1_STAT,(unsigned)VIF1_ERR);
+            s_ready=0;
+            s_status="VU1 FAIL VU DMA";
+            return -1;
+        }
+        printf("BOX3D_VU1_PHASE,vuonly_normal_dma_done,vif_stat=%08x,vif_err=%08x\n",
+               (unsigned)VIF1_STAT,(unsigned)VIF1_ERR);
+        s_status="VU1 VUONLY OK";
+        ++s_submissionCount;
+        return 1;
+    }
     packet2_reset(s_vifPacket,0);
     packet2_utils_vu_add_unpack_data(s_vifPacket,0,s_camera,7,0);
     for(int i=0;i<s_count;++i)

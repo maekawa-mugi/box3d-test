@@ -43,6 +43,20 @@ int main(void){
     assert(b3Vu1BuildBootStream(out,4)==4);
     assert(out[0]==0x11000000u && out[1]==0x14000000u);
     assert(out[2]==0x10000000u && out[3]==0);
-    puts("PASS: VIF1 normal DMA MPG, static/camera UNPACK, MSCAL boot");
+    uint32_t vertices[32],colors[24];
+    for(unsigned i=0;i<32;i++)vertices[i]=0x70000000u+i;
+    for(unsigned i=0;i<24;i++)colors[i]=0x80000000u+i;
+    assert(b3Vu1BuildVuOnlyStream(out,103,camera,vertices,colors,2)==0);
+    assert(b3Vu1BuildVuOnlyStream(out,104,camera,vertices,colors,2)==104);
+    assert(out[36]==0x01000101u && out[37]==0x6c084010u);
+    for(unsigned i=0;i<32;i++)assert(out[38+i]==vertices[i]);
+    assert(out[70]==0 && out[71]==0);
+    assert(out[72]==0x01000101u && out[73]==0x6c064018u);
+    for(unsigned i=0;i<24;i++)assert(out[74+i]==colors[i]);
+    assert(out[98]==0 && out[99]==0);
+    assert(out[100]==0x11000000u && out[101]==0x14000002u);
+    assert(out[102]==0x10000000u && out[103]==0);
+    assert(b3Vu1BuildVuOnlyStream(out,104,camera,vertices,colors,65536u)==0);
+    puts("PASS: VIF1 MPG, UNPACK, BOOT, VUONLY single-box normal DMA");
     return 0;
 }

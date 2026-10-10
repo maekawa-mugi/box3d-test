@@ -822,3 +822,26 @@ The VIF/BOOT stream format has host regression coverage. These changes
 do not prove VU1 execution or XGKICK works on PCSX2. VUONLY and box
 submission still use packet2 chains and should not be tried until BOOT
 is verified. PCSX2 on-target execution is not available here.
+
+## 2026-10-11: one-box VUONLY no longer depends on packet2 chains
+
+A PCSX2 run reached the BOOT page, logged a microVU1 program cache at
+PC=0, then restarted around 1.7 seconds later. The PCSX2 UI log does
+not contain an EE exception PC or the application's BOX3D stdout, so
+this **does not prove whether BOOT or the next TRIANGLE / VUONLY
+stage** requested the restart. The prior code still used packet2
+REF/TTE chains in `b3Vu1BoxesSubmit` beginning at VUONLY.
+
+The single-box, no-XGKICK VUONLY diagnostic now uses a bounded,
+contiguous VIF1 normal DMA stream: camera, vertices[8], colors[6],
+FLUSH, MSCAL transform PC=2, FLUSHE, NOP. Buffer size 104 u32 words
+(26 QWs). The packet is host-regression-tested including exact
+VIF command indices. VUONLY also prints `vuonly_normal_dma_begin`
+and `vuonly_normal_dma_done`, and displays `VU1 VUONLY OK`
+after its DMA completes.
+
+BOOT itself is unchanged. If a reset happens before advancing
+beyond BOOT, this change does not claim to solve it. Press only
+through BOOT and confirm `VU1 BOOT OK` before selecting VUONLY.
+Multi-box XGKICK still uses packet2, is NOT proven, and should not
+be attempted until VUONLY is stable.

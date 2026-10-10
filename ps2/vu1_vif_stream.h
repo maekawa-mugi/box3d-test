@@ -89,3 +89,39 @@ static inline size_t b3Vu1BuildBootStream(uint32_t* out,
     out[3]=0;
     return 4u;
 }
+
+/*
+ * Single-box VUONLY test: one safe VIF1 normal-DMA stream.
+ * No REF/TTE tags and NO XGKICK. Camera is followed by 8 vertices
+ * and 6 colors, then FLUSH, MSCAL(entry), FLUSHE, NOP.
+ * Camera includes FLUSHE and is harmless before the later UNPACKs.
+ */
+static inline size_t b3Vu1BuildVuOnlyStream(uint32_t* out,
+                                            size_t capacityWords,
+                                            const void* camera,
+                                            const void* vertices,
+                                            const void* colors,
+                                            uint32_t entryPc)
+{
+    if(!out || !camera || !vertices || !colors ||
+       capacityWords<104u || entryPc>0xffffu)return 0;
+    size_t at=b3Vu1BuildCameraStream(out,capacityWords,camera);
+    if(at!=36u)return 0;
+    out[at++]=0x01000101u; // STCYCL
+    out[at++]=0x6c084010u; // UNPACK V4_32 NUM=8 USN=1 DMEM[16]
+    memcpy(out+at,vertices,8u*16u);
+    at+=32u;
+    out[at++]=0;
+    out[at++]=0;
+    out[at++]=0x01000101u;
+    out[at++]=0x6c064018u; // UNPACK V4_32 NUM=6 USN=1 DMEM[24]
+    memcpy(out+at,colors,6u*16u);
+    at+=24u;
+    out[at++]=0;
+    out[at++]=0;
+    out[at++]=0x11000000u; // FLUSH, wait until VU is idle
+    out[at++]=0x14000000u | entryPc; // MSCAL
+    out[at++]=0x10000000u; // FLUSHE, wait for E-bit termination
+    out[at++]=0;
+    return at; // 104 words, 26 quadwords
+}
