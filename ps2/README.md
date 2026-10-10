@@ -406,3 +406,18 @@ No gsKit or libdraw: only direct GS GIF A+D DMA packets plus
 PS2SDK `graph` for CRT and `dma` for submission. The known-good
 wireframe renderer remains available separately. The new solid
 executable is not yet crossbuilt or run on PCSX2.
+
+## Official demo visual approximation
+
+`ps2/box3d_ps2_samples_official.elf` is an optional **third** native GS
+sample with daylight sky, diffuse+ambient-lit pastel cuboids,
+checkerboard ground, Z-tested hard planar contact shadows, and a small
+native GS overlay showing the selected scene. It uses the *same*
+C17 Box3D physics world as the already PCSX2-validated filled version
+but does not depend on gsKit, PS2SDK draw, shaders or an IOP UI service.
+See `ps2/NATIVE_GS_SAMPLES.md` for differences from the actual
+desktop renderer's Preetham/PBR/IBL/GTAO/shadow-map pipeline.
+
+The new ELF has not been compiled or run in PCSX2 yet. The old
+`ps2/box3d_ps2_samples_solid.elf` stays available as the known-good
+Z-buffered build, and `ps2/box3d_ps2_samples.elf` stays as wireframe.

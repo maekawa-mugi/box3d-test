@@ -130,9 +130,29 @@ for symbol in main b3World_Step b3Body_GetRotation b3GsTriangle3 b3GsLine3 b3GsP
         die "Solid native GS sample missing symbol: $symbol"
 done
 
+# Additional visual comparison ELF: official-demo-inspired lighting and UI,
+# still raw GS GIF A+D (no gsKit, no PS2SDK libdraw).
+OFFICIAL_SAMPLE_OUT=${OFFICIAL_SAMPLE_OUT:-$ROOT/ps2/box3d_ps2_samples_official.elf}
+"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
+    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
+    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 \
+    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
+    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
+    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" "$LIB" \
+    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$OFFICIAL_SAMPLE_OUT"
+"$READELF" -h "$OFFICIAL_SAMPLE_OUT" | grep -q 'Machine:.*MIPS' ||
+    die "Official-style sample is not a MIPS ELF"
+"$READELF" -h "$OFFICIAL_SAMPLE_OUT" | grep -q 'Type:.*EXEC' ||
+    die "Official-style sample is not an executable ELF"
+for symbol in main b3World_Step b3GsSkyGradient b3GsTriangle3 b3GsShadowBegin b3GsOverlayText b3GsPresent; do
+    "$NM" --defined-only "$OFFICIAL_SAMPLE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
+        die "Official-style GS sample missing symbol: $symbol"
+done
+
 printf 'PS2 BUILD OK: %s\n' "$OUT"
 printf 'PS2 BENCH BUILD OK: %s\n' "$BENCH_OUT"
 printf 'PS2 NATIVE GS SAMPLES OK: %s\n' "$SAMPLE_OUT"
 printf 'PS2 NATIVE GS SOLID SAMPLES OK: %s\n' "$SOLID_SAMPLE_OUT"
+printf 'PS2 OFFICIAL-STYLE GS SAMPLES OK: %s\n' "$OFFICIAL_SAMPLE_OUT"
 printf 'Target: %s\n' "$("$CC" -dumpmachine)"
 printf 'Run this ELF in PCSX2 or on PS2 and record BOX3D_STAGE / PASS / FAIL.\n'

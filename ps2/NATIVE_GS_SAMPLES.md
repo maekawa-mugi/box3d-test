@@ -58,3 +58,51 @@ rendering bring-up, not a production mesh renderer.
 or executed in PCSX2. Verify separately from the already confirmed
 wireframe screenshot; if solid fails, run the old
 `ps2/box3d_ps2_samples.elf` and report logs/screenshots.
+
+## Official-demo-inspired GS edition
+
+In PCSX2 the tester confirmed `box3d_ps2_samples_solid.elf` produces
+filled solids with correct Z occlusion. The new executable
+`ps2/box3d_ps2_samples_official.elf` builds as an additional variant,
+leaving both the previous wireframe and filled implementations intact.
+
+The PC desktop sample uses a Preetham atmospheric sky, PBR/IBL materials,
+sun shadows, GTAO, exposure/AgX tonemapping and an ImGui UI. The PS2
+cannot run these graphics shaders in their current form, so this build
+implements a carefully scoped low-cost GS approximation:
+
+- A blue-to-hazy-daylight gradient sky using GS native Gouraud
+  interpolated `PRIM=TRIANGLE` (IIP=1), without a texture.
+- A pale, softly alternating checker ground of 12x12 two-triangle tiles,
+  with discrete fine GS lines to resemble the official procedural grid.
+- Opaque cuboids with muted daylight materials and directional face
+  diffuse + ambient shading, maintaining original Box3D transforms.
+- A projected planar shadow quad for every eligible cuboid,
+  blended with `GS_SET_ALPHA` and depth writes disabled. This
+  approximates but does not reproduce the original cascade shadow maps.
+- A small semi-transparent sample-selection-style HUD on the left.
+  The characters are a custom 5x7 bitmap emitted as raw GS sprites,
+  with no IOP font service, gsKit, libdraw or textures.
+- Hardware Z-testing, two PSMCT32 color buffers, the same physics
+  stepping and scene switching as the confirmed working solid edition.
+
+The draw packet grows from 2,048 to 8,192 quadwords in this edition
+to cover the checker floor and GUI primitives. GS channel-2 DMA and
+per-frame FINISH/VBlank synchronization remain unchanged.
+
+```sh
+git pull --ff-only origin experiment/ps2-ee-scalar
+sh ps2/build_ee.sh
+# Boot ps2/box3d_ps2_samples_official.elf in PCSX2
+```
+
+The scene fidelity is deliberately approximate: it does not support
+image-based lighting, proper PBR BRDFs, arbitrary triangle near-clipping,
+SSAO, real shadow maps, or ImGui. The displayed sample bodies are still
+the simplified C17 ports, not byte-for-byte duplicates of every original
+desktop scene. Some geometries may flicker or disappear near the camera,
+and 60fps is unverified for this more expensive renderer.
+
+**The official-inspired edition is new and not yet crossbuilt or
+PCSX2-validated.** The previous GS-filled sample remains the fallback
+if any rendering or performance regression occurs.
