@@ -1,30 +1,32 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# Build the real R5900 PS2SDK EE ELF and verify that physics symbols linked.
-# PS2 libc arena is the reference for compiler flags, GS and linker libraries.
+# Unified native GS Box3D PS2 demo: 640x480p, PCSS, D-pad pages, stress.
+# Intentionally creates ONE ELF. The old *.elf variants are archived
+# source experiments and are no longer built.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 PS2DEV=${PS2DEV:-/usr/local/ps2dev}
 PS2SDK=${PS2SDK:-$PS2DEV/ps2sdk}
-# Make the default PS2DEV layout work even without a preconfigured PATH.
 PATH="$PS2DEV/ee/bin:$PATH"
 export PATH PS2DEV PS2SDK
 CC=${CC:-mips64r5900el-ps2-elf-gcc}
 NM=${NM:-mips64r5900el-ps2-elf-nm}
 READELF=${READELF:-mips64r5900el-ps2-elf-readelf}
 CMAKE=${CMAKE:-cmake}
-OUT=${OUT:-$ROOT/ps2/box3d_ps2_smoke.elf}
+OUT=${OUT:-$ROOT/ps2/box3d_ps2.elf}
 BUILD=${BUILD:-$ROOT/build/ps2-ee}
-
 die() { printf 'PS2 BUILD ERROR: %s\n' "$*" >&2; exit 1; }
-
 for tool in "$CC" "$NM" "$READELF" "$CMAKE"; do
     command -v "$tool" >/dev/null 2>&1 || die "Missing executable: $tool"
 done
-
-# Prefer Ninja if present, otherwise use GNU Make. Allow overrides through
-# CMAKE_GENERATOR, and pass the exact build-program path to CMake.
+case "$("$CC" -dumpmachine)" in
+    *r5900*) ;;
+    *) die "Compiler is not targeting PS2 R5900" ;;
+esac
+[ -f "$PS2SDK/ee/lib/libpad.a" ] || die "Missing PS2SDK libpad.a"
+[ -f "$PS2SDK/ee/lib/libkernel.a" ] || die "Missing PS2SDK libkernel.a"
+sh "$ROOT/ps2/check_gs_preprocessor.sh"
 if [ -n "${CMAKE_GENERATOR:-}" ]; then
     GENERATOR=$CMAKE_GENERATOR
 elif command -v ninja >/dev/null 2>&1; then
@@ -35,345 +37,36 @@ fi
 case "$GENERATOR" in
     Ninja) BUILD_PROGRAM=$(command -v ninja || true) ;;
     'Unix Makefiles') BUILD_PROGRAM=$(command -v make || true) ;;
-    *) die "Unsupported CMAKE_GENERATOR '$GENERATOR' (choose Ninja or Unix Makefiles)" ;;
+    *) die "Unsupported CMAKE_GENERATOR: $GENERATOR" ;;
 esac
-[ -n "$BUILD_PROGRAM" ] || die "No build program for $GENERATOR; install ninja or make"
-echo "PS2 build generator: $GENERATOR ($BUILD_PROGRAM)"
-case "$("$CC" -dumpmachine)" in
-    *r5900*) ;;
-    *) die "Refusing non-R5900 compiler: $("$CC" -dumpmachine)" ;;
-esac
-[ -f "$PS2SDK/ee/include/debug.h" ] || die "Missing PS2SDK debug.h: $PS2SDK"
-[ -f "$PS2SDK/ee/lib/libdebug.a" ] || die "Missing PS2SDK libdebug.a: $PS2SDK"
-[ -f "$PS2SDK/ee/lib/libkernel.a" ] || die "Missing PS2SDK libkernel.a: $PS2SDK"
-
-# Catch unbalanced GS conditional compilation in every renderer mode before
-# spending time on the physics build/link. Local guard, not GitHub Actions.
-sh "$ROOT/ps2/check_gs_preprocessor.sh"
-
-# The native PS2SDK executable, not a PS2 Linux userspace program, can read
-# privileged CP0 Count. Avoid reusing any host build directory or archive.
+[ -n "$BUILD_PROGRAM" ] || die "Missing $GENERATOR build program"
 "$CMAKE" -S "$ROOT" -B "$BUILD" -G "$GENERATOR" \
     -DCMAKE_MAKE_PROGRAM="$BUILD_PROGRAM" \
     -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/ps2-ee.cmake" \
     -DBOX3D_PS2=ON -DCMAKE_BUILD_TYPE=Release
 "$CMAKE" --build "$BUILD" --target box3d
-
 LIB="$BUILD/src/libbox3d.a"
-[ -s "$LIB" ] || die "Box3D EE archive is absent: $LIB"
+[ -s "$LIB" ] || die "Missing R5900 Box3D archive: $LIB"
 
-# Known working standalone EE pattern from ps2-libc-arena; link after objects.
-# CMake supplies the same -march/-G0/-fno-delayed-branch baseline to Box3D.
 "$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
+    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 -DBOX3D_PS2_UNIFIED=1 \
     -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    "$ROOT/ps2/smoke.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lm -ldebug -lkernel -o "$OUT"
+    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
+    -I"$PS2SDK/ee/rpc/pad/include" \
+    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
+    "$ROOT/ps2/shadow_project.c" "$ROOT/shared/human.c" \
+    "$ROOT/shared/utils.c" "$LIB" \
+    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lm -lkernel \
+    -o "$OUT"
 
-# Prevent a host executable, bare C probe, or missing physics step symbol from
-# being mistaken for a PS2 physics ELF. These checks are necessary, not proof
-# of an emulator or physical-PS2 run.
 "$READELF" -h "$OUT" | grep -q 'Machine:.*MIPS' ||
-    die "Output is not a MIPS ELF"
+    die "Output is not a MIPS executable"
 "$READELF" -h "$OUT" | grep -q 'Type:.*EXEC' ||
     die "Output is not an executable ELF"
-"$NM" --defined-only "$OUT" | grep -Eq ' [Tt] b3World_Step$' ||
-    die "Physics step implementation missing from linked ELF"
-"$NM" --defined-only "$OUT" | grep -Eq ' [Tt] main$' ||
-    die "PS2 smoke main() missing from linked ELF"
-
-# Build separate physics + MMI correctness/timing ELF. Smoke stays standalone.
-BENCH_OUT=${BENCH_OUT:-$ROOT/ps2/box3d_ps2_bench.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    "$ROOT/ps2/bench.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lm -ldebug -lkernel -o "$BENCH_OUT"
-"$READELF" -h "$BENCH_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "Benchmark is not a MIPS ELF"
-"$READELF" -h "$BENCH_OUT" | grep -q 'Type:.*EXEC' ||
-    die "Benchmark is not an executable ELF"
-for symbol in main b3World_Step b3Ps2ClearBytes b3Ps2OrWords b3Ps2SetMMIEnabled b3Ps2VU0Dot4 b3Ps2SetVU0Enabled; do
-    "$NM" --defined-only "$BENCH_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "Benchmark missing linked symbol: $symbol"
+for symbol in main b3World_Step b3GsPresent b3GsShadowSetPenumbra b3ShadowProjectBox CreateHuman padRead; do
+    "$NM" --defined-only "$OUT" | grep -Eq " [Tt] ${symbol}$" ||
+        die "Unified ELF missing symbol: $symbol"
 done
-
-# Native GS 3D wireframe sample runner: draw directly through GIF A+D + DMA.
-# graph is used only for CRT/display framebuffer, NOT for drawing; no gsKit.
-SAMPLE_OUT=${SAMPLE_OUT:-$ROOT/ps2/box3d_ps2_samples.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
-    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$SAMPLE_OUT"
-"$READELF" -h "$SAMPLE_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "Native GS sample is not a MIPS ELF"
-"$READELF" -h "$SAMPLE_OUT" | grep -q 'Type:.*EXEC' ||
-    die "Native GS sample is not an executable ELF"
-for symbol in main b3World_Step b3Body_GetPosition b3Body_GetRotation b3GsBegin b3GsLine3 b3GsPresent; do
-    "$NM" --defined-only "$SAMPLE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "Native GS sample missing linked symbol: $symbol"
-done
-
-# Alternate renderer with native GS triangles and PSMZ32 hardware Z-test.
-# The confirmed working wireframe ELF remains untouched as a build target.
-SOLID_SAMPLE_OUT=${SOLID_SAMPLE_OUT:-$ROOT/ps2/box3d_ps2_samples_solid.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 -DBOX3D_GS_SOLID=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
-    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$SOLID_SAMPLE_OUT"
-"$READELF" -h "$SOLID_SAMPLE_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "Solid sample is not a MIPS ELF"
-"$READELF" -h "$SOLID_SAMPLE_OUT" | grep -q 'Type:.*EXEC' ||
-    die "Solid sample is not executable ELF"
-for symbol in main b3World_Step b3Body_GetRotation b3GsTriangle3 b3GsLine3 b3GsPresent; do
-    "$NM" --defined-only "$SOLID_SAMPLE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "Solid native GS sample missing symbol: $symbol"
-done
-
-# Additional visual comparison ELF: official-demo-inspired lighting and UI,
-# still raw GS GIF A+D (no gsKit, no PS2SDK libdraw).
-OFFICIAL_SAMPLE_OUT=${OFFICIAL_SAMPLE_OUT:-$ROOT/ps2/box3d_ps2_samples_official.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
-    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$OFFICIAL_SAMPLE_OUT"
-"$READELF" -h "$OFFICIAL_SAMPLE_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "Official-style sample is not a MIPS ELF"
-"$READELF" -h "$OFFICIAL_SAMPLE_OUT" | grep -q 'Type:.*EXEC' ||
-    die "Official-style sample is not an executable ELF"
-for symbol in main b3World_Step b3GsSkyGradient b3GsTriangle3 b3GsShadowBegin b3GsOverlayText b3GsPresent; do
-    "$NM" --defined-only "$OFFICIAL_SAMPLE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "Official-style GS sample missing symbol: $symbol"
-done
-
-# Explicit GS Z-tested clipped box silhouette / receiver shadow test ELF.
-# The prior official-looking executable remains intact for direct A/B.
-SHADOW_SAMPLE_OUT=${SHADOW_SAMPLE_OUT:-$ROOT/ps2/box3d_ps2_samples_shadows.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 \
-    -DBOX3D_GS_RECEIVER_SHADOWS=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
-    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
-    "$ROOT/ps2/shadow_project.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$SHADOW_SAMPLE_OUT"
-"$READELF" -h "$SHADOW_SAMPLE_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "Projected shadow sample is not a MIPS ELF"
-"$READELF" -h "$SHADOW_SAMPLE_OUT" | grep -q 'Type:.*EXEC' ||
-    die "Projected shadow sample is not an executable ELF"
-for symbol in main b3World_Step b3GsTriangle3 b3GsShadowBegin b3ShadowProjectBox b3GsPresent; do
-    "$NM" --defined-only "$SHADOW_SAMPLE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "Projected shadow sample missing: $symbol"
-done
-
-# PS2 GS native Dual Kawase-style soft shadow demonstrator.
-# All rasterization, blur passes and subtractive final composite run on GS.
-# Preserve hard-shadow reference and all earlier visual sample ELFs.
-SOFT_SHADOW_OUT=${SOFT_SHADOW_OUT:-$ROOT/ps2/box3d_ps2_samples_softshadows.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 \
-    -DBOX3D_GS_RECEIVER_SHADOWS=1 -DBOX3D_GS_KAWASE_SHADOWS=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
-    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
-    "$ROOT/ps2/shadow_project.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$SOFT_SHADOW_OUT"
-"$READELF" -h "$SOFT_SHADOW_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "Soft shadow sample is not a MIPS ELF"
-"$READELF" -h "$SOFT_SHADOW_OUT" | grep -q 'Type:.*EXEC' ||
-    die "Soft shadow sample is not executable ELF"
-for symbol in main b3World_Step b3GsShadowBegin b3GsShadowEnd b3GsTriangle3 b3GsPresent b3ShadowProjectBox; do
-    "$NM" --defined-only "$SOFT_SHADOW_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "Soft shadow sample missing: $symbol"
-done
-
-# VRAM stage-debug ELF. It shows the full-res mask, quarter-res and
-# final half-res blur in three bottom-right diagnostic viewports.
-# Leave the normal soft-shadow ELF unchanged for a clean comparison.
-SOFT_DEBUG_OUT=${SOFT_DEBUG_OUT:-$ROOT/ps2/box3d_ps2_samples_softdebug.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 \
-    -DBOX3D_GS_RECEIVER_SHADOWS=1 \
-    -DBOX3D_GS_KAWASE_SHADOWS=1 -DBOX3D_GS_KAWASE_DEBUG=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
-    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
-    "$ROOT/ps2/shadow_project.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$SOFT_DEBUG_OUT"
-"$READELF" -h "$SOFT_DEBUG_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "Soft debug sample is not a MIPS ELF"
-"$READELF" -h "$SOFT_DEBUG_OUT" | grep -q 'Type:.*EXEC' ||
-    die "Soft debug sample is not executable ELF"
-for symbol in main b3GsKawaseDebugOverlay b3GsPresent b3ShadowProjectBox; do
-    "$NM" --defined-only "$SOFT_DEBUG_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "Soft debug sample missing: $symbol"
-done
-
-# Native GS PCF-style penumbra: 3x3 weighted bilinear taps of the
-# full-resolution receiver shadow mask; NO Kawase down/up pyramid.
-# Use a separate ELF for apples-to-apples PCSX2 visual and timing tests.
-PCF_SAMPLE_OUT=${PCF_SAMPLE_OUT:-$ROOT/ps2/box3d_ps2_samples_pcf.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 \
-    -DBOX3D_GS_RECEIVER_SHADOWS=1 -DBOX3D_GS_KAWASE_SHADOWS=1 \
-    -DBOX3D_GS_PCF_SHADOWS=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
-    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
-    "$ROOT/ps2/shadow_project.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$PCF_SAMPLE_OUT"
-"$READELF" -h "$PCF_SAMPLE_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "PCF mask sample is not a MIPS ELF"
-"$READELF" -h "$PCF_SAMPLE_OUT" | grep -q 'Type:.*EXEC' ||
-    die "PCF mask sample is not an executable ELF"
-for symbol in main b3World_Step b3GsShadowBegin b3GsShadowEnd b3GsPresent b3ShadowProjectBox; do
-    "$NM" --defined-only "$PCF_SAMPLE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "PCF mask sample missing linked symbol: $symbol"
-done
-
-# PCSS-inspired contact-hardening shadows. The GS stays fixed-function:
-# one full-res mask per Box3D caster with 1-5px height-dependent radius.
-# Distinct from depth-map PCSS, and separately comparable to fixed PCF.
-PCSS_SAMPLE_OUT=${PCSS_SAMPLE_OUT:-$ROOT/ps2/box3d_ps2_samples_pcss.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 \
-    -DBOX3D_GS_RECEIVER_SHADOWS=1 -DBOX3D_GS_KAWASE_SHADOWS=1 \
-    -DBOX3D_GS_PCF_SHADOWS=1 -DBOX3D_GS_PCSS_SHADOWS=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
-    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
-    "$ROOT/ps2/shadow_project.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel -o "$PCSS_SAMPLE_OUT"
-"$READELF" -h "$PCSS_SAMPLE_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "PCSS-inspired sample is not a MIPS ELF"
-"$READELF" -h "$PCSS_SAMPLE_OUT" | grep -q 'Type:.*EXEC' ||
-    die "PCSS-inspired sample is not executable ELF"
-for symbol in main b3World_Step b3GsShadowSetPenumbra b3GsProjectScreen b3GsPresent b3ShadowProjectBox; do
-    "$NM" --defined-only "$PCSS_SAMPLE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "PCSS-inspired sample missing linked symbol: $symbol"
-done
-
-# Native GS sample variant: pcf_4tap.
-PCF_4TAP_OUT=${PCF_4TAP_OUT:-$ROOT/ps2/box3d_ps2_samples_pcf_4tap.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 -DBOX3D_GS_RECEIVER_SHADOWS=1 -DBOX3D_GS_KAWASE_SHADOWS=1 -DBOX3D_GS_PCF_SHADOWS=1 -DBOX3D_GS_PCF_4TAP=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
-    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
-    "$ROOT/ps2/shadow_project.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lm -lkernel \
-    -o "$PCF_4TAP_OUT"
-"$READELF" -h "$PCF_4TAP_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "pcf_4tap is not a MIPS ELF"
-"$READELF" -h "$PCF_4TAP_OUT" | grep -q 'Type:.*EXEC' ||
-    die "pcf_4tap is not an executable ELF"
-for symbol in main b3World_Step b3GsShadowBegin b3GsPresent b3GsTriangle3 b3ShadowProjectBox; do
-    "$NM" --defined-only "$PCF_4TAP_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "pcf_4tap missing linked symbol: $symbol"
-done
-printf 'PS2 SAMPLE pcf_4tap OK: %s\n' "$PCF_4TAP_OUT"
-
-# PS2SDK EE kernel exports sceSifInitRpc and SifLoadModule. The SDK
-# pad sample links libpad (-lpad) but NOT -lloadfile/-lsifrpc (these
-# nonexistent libraries caused a linker failure with PS2DEV GCC 15).
-# Keep -lkernel at the end for the RPC and IOP module-loader symbols.
-# The progressive scene viewer uses the original Box3D Human ragdoll.
-# PS2SDK libpad + IOP module loader enable immediate left/right changes.
-# Link human.c/utils.c ONLY into progressive samples; legacy 320 builds
-# retain exactly their existing scene behavior and link dependencies.
-# Native GS sample variant: pcf_progressive.
-PCF_PROGRESSIVE_OUT=${PCF_PROGRESSIVE_OUT:-$ROOT/ps2/box3d_ps2_samples_pcf_progressive.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 -DBOX3D_GS_RECEIVER_SHADOWS=1 -DBOX3D_GS_KAWASE_SHADOWS=1 -DBOX3D_GS_PCF_SHADOWS=1 -DBOX3D_GS_PCF_4TAP=1 -DBOX3D_GS_PROGRESSIVE=1 -DBOX3D_PS2_PAD_NAV=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
-    -I"$PS2SDK/ee/rpc/pad/include" \
-    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
-    "$ROOT/ps2/shadow_project.c" \
-    "$ROOT/shared/human.c" "$ROOT/shared/utils.c" "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lm -lkernel \
-    -o "$PCF_PROGRESSIVE_OUT"
-"$READELF" -h "$PCF_PROGRESSIVE_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "pcf_progressive is not a MIPS ELF"
-"$READELF" -h "$PCF_PROGRESSIVE_OUT" | grep -q 'Type:.*EXEC' ||
-    die "pcf_progressive is not an executable ELF"
-for symbol in main b3World_Step b3GsShadowBegin b3GsPresent b3GsTriangle3 b3ShadowProjectBox; do
-    "$NM" --defined-only "$PCF_PROGRESSIVE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "pcf_progressive missing linked symbol: $symbol"
-done
-printf 'PS2 SAMPLE pcf_progressive OK: %s\n' "$PCF_PROGRESSIVE_OUT"
-
-# Expanded down/up Kawase pyramid, all GS-native in disjoint VRAM.
-KAWASE_WIDE_OUT=${KAWASE_WIDE_OUT:-$ROOT/ps2/box3d_ps2_samples_kawase_wide.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 -DBOX3D_GS_RECEIVER_SHADOWS=1 -DBOX3D_GS_KAWASE_SHADOWS=1 -DBOX3D_GS_KAWASE_WIDE=1 -DBOX3D_PS2_PAD_NAV=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
-    -I"$PS2SDK/ee/rpc/pad/include" \
-    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
-    "$ROOT/ps2/shadow_project.c" \
-    "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lm -lkernel \
-    -o "$KAWASE_WIDE_OUT"
-"$READELF" -h "$KAWASE_WIDE_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "kawase_wide is not a MIPS ELF"
-"$READELF" -h "$KAWASE_WIDE_OUT" | grep -q 'Type:.*EXEC' ||
-    die "kawase_wide is not an executable MIPS ELF"
-for symbol in main b3World_Step b3GsShadowEnd b3GsPresent padRead; do
-    "$NM" --defined-only "$KAWASE_WIDE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "kawase_wide missing linked symbol: $symbol"
-done
-printf 'PS2 GS WIDE KAWASE kawase_wide OK: %s\n' "$KAWASE_WIDE_OUT"
-
-# Expanded down/up Kawase pyramid, all GS-native in disjoint VRAM.
-KAWASE_WIDE_PROGRESSIVE_OUT=${KAWASE_WIDE_PROGRESSIVE_OUT:-$ROOT/ps2/box3d_ps2_samples_kawase_wide_progressive.elf}
-"$CC" -O2 -std=gnu17 -march=r5900 -G0 -fno-lto -fno-delayed-branch \
-    -D_EE -DBOX3D_PS2=1 -DB3_ENABLE_ASSERT=1 \
-    -DBOX3D_GS_SOLID=1 -DBOX3D_GS_OFFICIAL=1 -DBOX3D_GS_RECEIVER_SHADOWS=1 -DBOX3D_GS_KAWASE_SHADOWS=1 -DBOX3D_GS_KAWASE_WIDE=1 -DBOX3D_PS2_PAD_NAV=1 -DBOX3D_GS_PROGRESSIVE=1 \
-    -I"$ROOT/include" -I"$PS2SDK/ee/include" -I"$PS2SDK/common/include" \
-    -I"$PS2SDK/ee/graph/include" -I"$PS2SDK/ee/dma/include" \
-    -I"$PS2SDK/ee/rpc/pad/include" \
-    "$ROOT/ps2/sample_native.c" "$ROOT/ps2/gs_native.c" \
-    "$ROOT/ps2/shadow_project.c" \
-    "$ROOT/shared/human.c" "$ROOT/shared/utils.c" \
-    "$LIB" \
-    -L"$PS2SDK/ee/lib" -lgraph -ldma -lpad -lm -lkernel \
-    -o "$KAWASE_WIDE_PROGRESSIVE_OUT"
-"$READELF" -h "$KAWASE_WIDE_PROGRESSIVE_OUT" | grep -q 'Machine:.*MIPS' ||
-    die "kawase_wide_progressive is not a MIPS ELF"
-"$READELF" -h "$KAWASE_WIDE_PROGRESSIVE_OUT" | grep -q 'Type:.*EXEC' ||
-    die "kawase_wide_progressive is not an executable MIPS ELF"
-for symbol in main b3World_Step b3GsShadowEnd b3GsPresent padRead; do
-    "$NM" --defined-only "$KAWASE_WIDE_PROGRESSIVE_OUT" | grep -Eq " [Tt] ${symbol}$" ||
-        die "kawase_wide_progressive missing linked symbol: $symbol"
-done
-"$NM" --defined-only "$KAWASE_WIDE_PROGRESSIVE_OUT" | grep -Eq " [Tt] CreateHuman$" || die "kawase_wide_progressive is missing human ragdoll"
-printf 'PS2 GS WIDE KAWASE kawase_wide_progressive OK: %s\n' "$KAWASE_WIDE_PROGRESSIVE_OUT"
-
-printf 'PS2 BUILD OK: %s\n' "$OUT"
-printf 'PS2 BENCH BUILD OK: %s\n' "$BENCH_OUT"
-printf 'PS2 NATIVE GS SAMPLES OK: %s\n' "$SAMPLE_OUT"
-printf 'PS2 NATIVE GS SOLID SAMPLES OK: %s\n' "$SOLID_SAMPLE_OUT"
-printf 'PS2 OFFICIAL-STYLE GS SAMPLES OK: %s\n' "$OFFICIAL_SAMPLE_OUT"
-printf 'PS2 CLIPPED PROJECTED SHADOW SAMPLES OK: %s\n' "$SHADOW_SAMPLE_OUT"
-printf 'PS2 GS DUAL KAWASE SOFT SHADOW SAMPLES OK: %s\n' "$SOFT_SHADOW_OUT"
-printf 'PS2 GS SOFT SHADOW STAGE DEBUG OK: %s\n' "$SOFT_DEBUG_OUT"
-printf 'PS2 GS PCF-STYLE SHADOWS OK: %s\n' "$PCF_SAMPLE_OUT"
-printf 'PS2 GS CONTACT-HARDENING SHADOWS OK: %s\n' "$PCSS_SAMPLE_OUT"
-printf 'Target: %s\n' "$("$CC" -dumpmachine)"
-printf 'Run this ELF in PCSX2 or on PS2 and record BOX3D_STAGE / PASS / FAIL.\n'
+printf 'BOX3D PS2 UNIFIED OK: %s\n' "$OUT"
+printf 'VIDEO: 640x480p | SHADOW: PCSS with bilinear PCF | D-PAD: LEFT/RIGHT pages\n'
+printf 'Stale box3d_ps2_samples_*.elf files may exist from older builds; do not load them.\n'

@@ -5,6 +5,23 @@
 #define B3_PS2_NATIVE_GS_H
 
 #include <stdint.h>
+
+/*
+ * One canonical retail/demo configuration. PCF is not a competing ELF:
+ * its 4-tap bilinear tent is the near-field filter INSIDE the PCSS
+ * contact-hardening algorithm. All physics scenes share this build.
+ */
+#if defined(BOX3D_PS2_UNIFIED)
+#define BOX3D_GS_SOLID 1
+#define BOX3D_GS_OFFICIAL 1
+#define BOX3D_GS_RECEIVER_SHADOWS 1
+#define BOX3D_GS_KAWASE_SHADOWS 1
+#define BOX3D_GS_PCF_SHADOWS 1
+#define BOX3D_GS_PCF_4TAP 1
+#define BOX3D_GS_PCSS_SHADOWS 1
+#define BOX3D_GS_PROGRESSIVE 1
+#define BOX3D_PS2_PAD_NAV 1
+#endif
 #if defined(BOX3D_GS_PROGRESSIVE)
 #define B3_PS2_GS_W 640
 #define B3_PS2_GS_H 480
