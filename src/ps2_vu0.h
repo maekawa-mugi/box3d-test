@@ -17,9 +17,10 @@ typedef struct b3Ps2VU0Dot4Data
     float out[4];
 } b3Ps2VU0Dot4Data;
 
-// 0: original scalar COP1; 1: legacy single-dot VU0 path; 2: only paired
-// VU0 dot kernels, with standalone dots kept scalar. This isolates the real
-// batching gain from the single-dot transfer overhead in benchmarks.
+// 0: original scalar COP1; 1: legacy single-dot VU0 path;
+// 2: original paired VU0 dot kernels (single dots stay scalar);
+// 3: same paired mode plus preparation-stage paired dots.
+// This isolates additional scheduling/data-transfer gains from mode 2.
 // Mode 0 remains default. Change only between completed world steps.
 void b3Ps2SetVU0Enabled( int enabled );
 int b3Ps2GetVU0Enabled( void );
@@ -46,3 +47,8 @@ void b3Ps2VU0Dot4Pair( b3Ps2VU0Dot4PairData* data );
 // Instrumentation counters to ensure the physics A/B exercises paired VU0.
 void b3Ps2ResetVU0PairCount( void );
 unsigned b3Ps2GetVU0PairCount( void );
+
+// Instrument only extra preparation-stage pair sites so mode 3 A/B tests
+// cannot report a speedup when the new code path was not reached.
+void b3Ps2RecordVU0ExtendedPair( void );
+unsigned b3Ps2GetVU0ExtendedPairCount( void );

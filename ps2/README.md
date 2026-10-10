@@ -225,3 +225,24 @@ microbenchmarks. Inspect the `BOX3D_VU0_SCENE` call counts before
 changing more VF instructions. The earlier four-record microbenchmark is
 a standalone throughput test that does **not** imply that these grouped
 operations are used by the live physics solver.
+
+## Experimental mode 3: pair contact-preparation dot products
+
+PCSX2 measurements with the mode-2 paired solver showed a real, repeatable
+~1.027x-1.028x end-to-end improvement versus scalar, while the original
+single-dot VU0 mode 1 was ~0.991x. The 32-box profile reduced solver time
+from ~4.57 ms to ~4.44 ms (PCSX2, not physical hardware).
+
+Mode 3 extends mode 2, pairing more independent inner products in contact
+preparation: normal effective mass and three tangent effective-mass terms.
+Each individual dot and all outer additions keep their original association.
+Mode 2 is unchanged and remains the known-good runtime to compare against.
+
+The benchmark now runs one additional *ABBA mode-2 versus mode-3* 32-box
+comparison under label `extended 32-box`. Inspect the screen's mode2/mode3
+cycles and `BOX3D_VU0_SCENE` CSV's `extended=` count (must be positive
+in mode 3). The `BOX3D_VU0_PHASE_SUMMARY` fields identify the baseline
+and target mode explicitly to prevent treating mode-2 results as COP1-only.
+If mode 3 is slower, keep mode 2; this is an opt-in experiment, not the
+default path. VU0 and PS2DEV crosscompilation of this latest experiment
+remain unverified pending the next PCSX2 tester run.

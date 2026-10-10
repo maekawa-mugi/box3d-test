@@ -19,10 +19,12 @@ _Static_assert( sizeof(b3Ps2VU0Dot4Data) % 16 == 0, "VU0 record stride" );
 
 static int s_vu0Mode;
 static unsigned s_vu0PairCount;
+static unsigned s_vu0ExtendedPairCount;
 
 void b3Ps2ResetVU0PairCount( void )
 {
     s_vu0PairCount = 0;
+    s_vu0ExtendedPairCount = 0;
 }
 
 unsigned b3Ps2GetVU0PairCount( void )
@@ -30,9 +32,19 @@ unsigned b3Ps2GetVU0PairCount( void )
     return s_vu0PairCount;
 }
 
+void b3Ps2RecordVU0ExtendedPair( void )
+{
+    ++s_vu0ExtendedPairCount;
+}
+
+unsigned b3Ps2GetVU0ExtendedPairCount( void )
+{
+    return s_vu0ExtendedPairCount;
+}
+
 void b3Ps2SetVU0Enabled( int mode )
 {
-    s_vu0Mode = mode == 2 ? 2 : ( mode != 0 ? 1 : 0 );
+    s_vu0Mode = mode == 3 ? 3 : ( mode == 2 ? 2 : ( mode != 0 ? 1 : 0 ) );
 }
 
 int b3Ps2GetVU0Enabled( void )

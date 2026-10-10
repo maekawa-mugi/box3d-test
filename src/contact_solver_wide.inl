@@ -791,9 +791,15 @@ B3_FORCE_INLINE bool b3PrepareConstraintW( b3ContactConstraintWide* c, b3Contact
 
 			b3Vec3W rnA = b3CrossW( rA, normal );
 			b3Vec3W rnB = b3CrossW( rB, normal );
+			// Independent normal effective-mass dot terms. Mode 3 pairs them
+			// in one COP2 invocation; modes 0/1/2 retain scalar association.
+			b3Vec3W iArnA = b3MulMVW( iA, rnA );
+			b3Vec3W iBrnB = b3MulMVW( iB, rnB );
+			b3FloatW dotNormalA, dotNormalB;
+			b3Dot2WExtended( rnA, iArnA, rnB, iBrnB, &dotNormalA, &dotNormalB );
 			b3FloatW kNormal = b3AddW( mA, mB );
-			kNormal = b3AddW( kNormal, b3DotW( rnA, b3MulMVW( iA, rnA ) ) );
-			kNormal = b3AddW( kNormal, b3DotW( rnB, b3MulMVW( iB, rnB ) ) );
+			kNormal = b3AddW( kNormal, dotNormalA );
+			kNormal = b3AddW( kNormal, dotNormalB );
 			b3FloatW valid = b3AndW( b3GreaterThanW( kNormal, zeroW ), pointMask );
 			cp->normalMasses = b3BlendW( zeroW, b3DivW( oneW, kNormal ), valid );
 		}
@@ -823,9 +829,15 @@ B3_FORCE_INLINE bool b3PrepareConstraintW( b3ContactConstraintWide* c, b3Contact
 			b3Vec3W iBrtB1 = b3MulMVW( iB, rtB1 );
 			b3Vec3W iBrtB2 = b3MulMVW( iB, rtB2 );
 
-			b3FloatW kxx = b3AddW( b3AddW( b3AddW( mA, mB ), b3DotW( rtA1, iArtA1 ) ), b3DotW( rtB1, iBrtB1 ) );
-			b3FloatW kyy = b3AddW( b3AddW( b3AddW( mA, mB ), b3DotW( rtA2, iArtA2 ) ), b3DotW( rtB2, iBrtB2 ) );
-			b3FloatW kxy = b3AddW( b3DotW( rtA1, iArtA2 ), b3DotW( rtB1, iBrtB2 ) );
+			// Three independent pairs of tangent effective-mass dot terms.
+			// Preserve each original outer addition order (mA+mB)+A+B.
+			b3FloatW xxA, xxB, yyA, yyB, xyA, xyB;
+			b3Dot2WExtended( rtA1, iArtA1, rtB1, iBrtB1, &xxA, &xxB );
+			b3Dot2WExtended( rtA2, iArtA2, rtB2, iBrtB2, &yyA, &yyB );
+			b3Dot2WExtended( rtA1, iArtA2, rtB1, iBrtB2, &xyA, &xyB );
+			b3FloatW kxx = b3AddW( b3AddW( b3AddW( mA, mB ), xxA ), xxB );
+			b3FloatW kyy = b3AddW( b3AddW( b3AddW( mA, mB ), yyA ), yyB );
+			b3FloatW kxy = b3AddW( xyA, xyB );
 
 			b3FloatW det = b3SubW( b3MulW( kxx, kyy ), b3MulW( kxy, kxy ) );
 			b3FloatW valid = b3AndW( b3GreaterThanW( b3AbsW( det ), minDet ), frictionValid );

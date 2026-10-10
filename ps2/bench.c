@@ -28,6 +28,7 @@ typedef struct BenchResult
     uint32_t slowSamples;
     int cleanupOk;
     unsigned pairCalls;
+    unsigned extendedPairs;
     // Box3D's own nested profile: sum across all measured steps, in ms.
     // Read outside the externally timed b3World_Step call, so accessor
     // overhead does not contaminate the Count delta.
@@ -229,6 +230,7 @@ static BenchResult run_physics( int mode, int vu0Mode, int side, int layers )
     }
 
     result.pairCalls = b3Ps2GetVU0PairCount();
+    result.extendedPairs = b3Ps2GetVU0ExtendedPairCount();
     b3DestroyWorld( world );
     result.cleanupOk = beforeBytes == b3GetByteCount() && beforeWorlds == b3GetWorldCount();
     if ( !result.cleanupOk ) screen_stop( "world memory leak" );
@@ -526,24 +528,29 @@ static void vu0_batch_benchmark( void )
            (unsigned long long)(batchTicks/iterations),checksum);
 }
 
-static void vu0_scene_benchmark( const char* label, int side, int layers, int targetMode )
+static void vu0_scene_benchmark( const char* label, int side, int layers, int baselineMode, int targetMode )
 {
-    // ABBA interleaves scalar and the selected VU0 mode to reduce drift.
-    const int modes[4] = { 0, targetMode, targetMode, 0 };
+    // ABBA interleaves the selected baseline and target mode. Comparing
+    // mode 2 against mode 3 isolates preparation-stage pair rewrites.
+    const int modes[4] = { baselineMode, targetMode, targetMode, baselineMode };
     BenchResult runs[4];
     uint64_t baseline = 0, vu0 = 0;
     for ( int i = 0; i < 4; ++i )
     {
         runs[i] = run_physics( 0, modes[i], side, layers );
-        printf( "BOX3D_VU0_SCENE,%s,repeat=%d,vu0=%d,ticks=%llu,pairs=%u,y=%.7f,pos=%.7f,vel=%.7f\n",
+        printf( "BOX3D_VU0_SCENE,%s,repeat=%d,vu0=%d,ticks=%llu,pairs=%u,extended=%u,y=%.7f,pos=%.7f,vel=%.7f\n",
                 label,i,modes[i],(unsigned long long)runs[i].ticks,runs[i].pairCalls,
-                runs[i].firstY,runs[i].positionSum,runs[i].velocitySum );
+                runs[i].extendedPairs,runs[i].firstY,runs[i].positionSum,runs[i].velocitySum );
         printf( "BOX3D_VU0_PHASE,%s,repeat=%d,vu0=%d,step_ms=%.4f,pairs_ms=%.4f,collide_ms=%.4f,solve_ms=%.4f,sensors_ms=%.4f\n",
                 label,i,modes[i],runs[i].profileStepMs,runs[i].profilePairsMs,
                 runs[i].profileCollideMs,runs[i].profileSolveMs,runs[i].profileSensorsMs );
-        if ( modes[i] == 2 && runs[i].pairCalls == 0 )
+        if ( modes[i] >= 2 && runs[i].pairCalls == 0 )
         {
             screen_stop( "VU0 paired backend unused in physics" );
+        }
+        if ( modes[i] == 3 && runs[i].extendedPairs == 0 )
+        {
+            screen_stop( "VU0 extended pairing unused in physics" );
         }
         if ( modes[i] ) vu0 += runs[i].ticks;
         else baseline += runs[i].ticks;
@@ -562,12 +569,12 @@ static void vu0_scene_benchmark( const char* label, int side, int layers, int ta
     }
     const double ratio = vu0 ? (double)baseline/(double)vu0 : 0.0;
     char display[160];
-    snprintf( display, sizeof(display), "%s: scalar %llu / VU0 %llu cyc/step (x%.3f)",
-              label,(unsigned long long)(baseline/(2*BENCH_STEPS)),
-              (unsigned long long)(vu0/(2*BENCH_STEPS)),ratio );
+    snprintf( display, sizeof(display), "%s: mode%d %llu / mode%d %llu cyc/step (x%.3f)",
+              label,baselineMode,(unsigned long long)(baseline/(2*BENCH_STEPS)),
+              targetMode,(unsigned long long)(vu0/(2*BENCH_STEPS)),ratio );
     screen_line( display );
-    printf( "BOX3D_VU0_SUMMARY,%s,scalar_ticks=%llu,vu0_ticks=%llu,ratio=%.5f,correct=1\n",
-            label,(unsigned long long)baseline,(unsigned long long)vu0,ratio );
+    printf( "BOX3D_VU0_SUMMARY,%s,base_mode=%d,target_mode=%d,base_ticks=%llu,target_ticks=%llu,ratio=%.5f,correct=1\n",
+            label,baselineMode,targetMode,(unsigned long long)baseline,(unsigned long long)vu0,ratio );
 
     // Phase averages are averaged over two scalar trials and two VU0
     // trials. Separate pairs/collide/solve from total step time to decide
@@ -578,8 +585,8 @@ static void vu0_scene_benchmark( const char* label, int side, int layers, int ta
     const double vu0Pairs = 0.5 * (runs[1].profilePairsMs + runs[2].profilePairsMs) / BENCH_STEPS;
     const double vu0Collide = 0.5 * (runs[1].profileCollideMs + runs[2].profileCollideMs) / BENCH_STEPS;
     const double vu0Solve = 0.5 * (runs[1].profileSolveMs + runs[2].profileSolveMs) / BENCH_STEPS;
-    printf( "BOX3D_VU0_PHASE_SUMMARY,%s,mode=%d,scalar_pairs_ms=%.5f,vu0_pairs_ms=%.5f,scalar_collide_ms=%.5f,vu0_collide_ms=%.5f,scalar_solve_ms=%.5f,vu0_solve_ms=%.5f\n",
-            label,targetMode,scalarPairs,vu0Pairs,scalarCollide,vu0Collide,scalarSolve,vu0Solve );
+    printf( "BOX3D_VU0_PHASE_SUMMARY,%s,base_mode=%d,target_mode=%d,base_pairs_ms=%.5f,target_pairs_ms=%.5f,base_collide_ms=%.5f,target_collide_ms=%.5f,base_solve_ms=%.5f,target_solve_ms=%.5f\n",
+            label,baselineMode,targetMode,scalarPairs,vu0Pairs,scalarCollide,vu0Collide,scalarSolve,vu0Solve );
     snprintf( display,sizeof(display),"Phase ms: P %.2f/%.2f C %.2f/%.2f S %.2f/%.2f",
               scalarPairs,vu0Pairs,scalarCollide,vu0Collide,scalarSolve,vu0Solve );
     screen_line( display );
@@ -629,12 +636,15 @@ int main( void )
               (unsigned long long)(pairScalar/256),
               (unsigned long long)(pairVector/256) );
     screen_line( vu0Line );
-    vu0_scene_benchmark( "single eight-box", 2, 2, 1 );
-    vu0_scene_benchmark( "single 32-box", 4, 2, 1 );
-    vu0_scene_benchmark( "paired eight-box", 2, 2, 2 );
-    vu0_scene_benchmark( "paired 32-box", 4, 2, 2 );
+    vu0_scene_benchmark( "single eight-box", 2, 2, 0, 1 );
+    vu0_scene_benchmark( "single 32-box", 4, 2, 0, 1 );
+    vu0_scene_benchmark( "paired eight-box", 2, 2, 0, 2 );
+    vu0_scene_benchmark( "paired 32-box", 4, 2, 0, 2 );
+    // ABBA directly compares last-known-good mode 2 to the extended
+    // preparation-stage mode 3. 32 bodies have the best solver S/N ratio.
+    vu0_scene_benchmark( "extended 32-box", 4, 2, 2, 3 );
     scr_setfontcolor( 0x77ff77u );
-    screen_line( "PASS: MMI + VU0 single/paired math + physics" );
+    screen_line( "PASS: MMI + VU0 single/paired/extended physics" );
     puts( "BOX3D_VU0_BENCH_PASS" );
     puts( "BOX3D_BENCH_PASS" );
     screen_line( "Result held; reset PS2 to exit." );
