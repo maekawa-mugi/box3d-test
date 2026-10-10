@@ -1,11 +1,17 @@
 ﻿cmake_minimum_required(VERSION 3.22)
 include(CMakeDependentOption)
 
+# The EE baseline is C-only. Do not require a PS2 C++ compiler just to
+# configure and build libbox3d.a (BOX3D_PS2 is supplied with -D at configure).
+set(BOX3D_PROJECT_LANGUAGES C CXX)
+if(BOX3D_PS2)
+    set(BOX3D_PROJECT_LANGUAGES C)
+endif()
 project(box3d
 	VERSION 0.1.0
 	DESCRIPTION "A 3D physics engine for games"
 	HOMEPAGE_URL "https://box2d.org"
-	LANGUAGES C CXX
+	LANGUAGES ${BOX3D_PROJECT_LANGUAGES}
 )
 
 # stuff to help debug cmake

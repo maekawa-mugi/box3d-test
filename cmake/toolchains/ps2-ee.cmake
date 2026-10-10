@@ -10,9 +10,8 @@ if(DEFINED ENV{PS2DEV})
     list(PREPEND CMAKE_PROGRAM_PATH "$ENV{PS2DEV}/ee/bin")
 endif()
 find_program(PS2_EE_GCC NAMES mips64r5900el-ps2-elf-gcc REQUIRED)
-find_program(PS2_EE_GXX NAMES mips64r5900el-ps2-elf-g++ REQUIRED)
 set(CMAKE_C_COMPILER "${PS2_EE_GCC}")
-set(CMAKE_CXX_COMPILER "${PS2_EE_GXX}")
+# The Box3D EE baseline uses C only; no C++ compiler is required here.
 
 # Do not link a test executable during configure: ps2sdk link flags depend
 # on the application and are unnecessary for a static-library build.
