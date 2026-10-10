@@ -1234,3 +1234,17 @@ block size remains for EE scalar and other contact types.
 `LQ/SQ` correctness, actual VCALLMS/group utilization, timing and
 60 FPS. The libc-arena screen is a RAM-to-RAM memcpy microbenchmark
 and is not proof of MMIO transfer speedup.
+
+### One preflight per world step, one mandatory completion wait per batch
+
+After a successful VCALLMS the runner waits for VU0 idle **before**
+reading any dependent impulse result. While Box3D mode 6 is active,
+legacy COP2 macro kernels are excluded and native PS2 has one EE physics
+worker; subsequent calls within the same world step therefore reuse
+that established idle state instead of issuing a redundant initial
+CFC2 poll for every submission. The idle state is invalidated on each
+new physics step and on microcode upload; the first VCALLMS preflights
+normally. Each VCALLMS continues to wait at completion and falls back
+to EE on error. This eliminates only *redundant preflight polls*; the
+main launch-count reduction comes from packing 16 SIMD4 constraints
+into each graph-colored task rather than four.

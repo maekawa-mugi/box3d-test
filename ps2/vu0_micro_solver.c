@@ -29,11 +29,16 @@ static unsigned s_liveCalls;
 static unsigned s_stepCalls;
 static unsigned s_batchCalls;
 static unsigned s_liveGroups;
+// One EE worker owns VU0 micro while mode 6 is active. Each launch
+// waits for full completion before returning; no COP2 macro calls run
+// in this mode. Recheck once at each world-step boundary.
+static int s_completedVu0IsIdle;
 
 void b3Vu0MicroBeginPhysicsStep(void)
 {
     s_stepCalls=0;
     s_batchCalls=0;
+    s_completedVu0IsIdle=0;
 }
 _Static_assert(sizeof(b3Ps2VU0NormalSolveData)==sizeof(b3Vu0MicroRecord),
                "Box3D SIMD4 normal impulse ABI must match VU0 micro record");
@@ -55,6 +60,7 @@ const char* b3Vu0MicroStatus(void){return s_status;}
 
 int b3Vu0MicroUpload(void)
 {
+    s_completedVu0IsIdle=0;
     s_uploaded=0;
     s_verified=0;
     s_status="VU0 MICRO UPLOAD";
@@ -119,12 +125,16 @@ static int b3Vu0MicroRunRecords(const void* inputs,void* outputs,unsigned groups
 {
     if(!s_verified || !inputs || !outputs ||
        groups==0 || groups>B3_VU0_MICRO_GROUPS)return 0;
-    if(!b3Vu0WaitIdle())
+    // A previous VCALLMS already waited for idle before returning.
+    // Avoid a second CFC2 poll before every graph-colored micro batch,
+    // but always preflight on entry to a new Box3D world step.
+    if(!s_completedVu0IsIdle && !b3Vu0WaitIdle())
     {
         s_verified=0;
         s_status="VU0 FAIL BUSY";
         return 0;
     }
+    s_completedVu0IsIdle=0;
     b3Vu0PushRecordInputs(B3_VU0_DATA_BASE,inputs,groups);
     __asm__ __volatile__("sync.l" ::: "memory");
     __asm__ __volatile__("vcallms 0" ::: "memory");
@@ -137,6 +147,7 @@ static int b3Vu0MicroRunRecords(const void* inputs,void* outputs,unsigned groups
         return 0;
     }
     b3Vu0PullRecordOutputs(outputs,B3_VU0_DATA_BASE,groups);
+    s_completedVu0IsIdle=1;
     return 1;
 }
 
